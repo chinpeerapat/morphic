@@ -7,40 +7,40 @@ export interface Model {
 
 export const models: Model[] = [
   {
-    id: 'gpt-4o',
+    id: 'openai/gpt-4o',
     name: 'GPT-4o',
-    provider: 'OpenAI',
-    providerId: 'openai'
+    provider: 'openrouter',
+    providerId: 'openrouter'
   },
   {
-    id: 'gpt-4o-mini',
+    id: 'openai/gpt-4o-mini',
     name: 'GPT-4o mini',
-    provider: 'OpenAI',
-    providerId: 'openai'
+    provider: 'openrouter',
+    providerId: 'openrouter'
   },
   {
-    id: 'claude-3-5-sonnet-latest',
+    id: 'anthropic/claude-3.5-sonnet:beta',
     name: 'Claude 3.5 Sonnet',
-    provider: 'Anthropic',
-    providerId: 'anthropic'
+    provider: 'openrouter',
+    providerId: 'openrouter'
   },
   {
-    id: 'claude-3-5-haiku-20241022',
+    id: 'anthropic/claude-3-5-haiku-20241022',
     name: 'Claude 3.5 Haiku',
-    provider: 'Anthropic',
-    providerId: 'anthropic'
+    provider: 'openrouter',
+    providerId: 'openrouter'
   },
   {
-    id: 'gemini-1.5-pro-002',
-    name: 'Gemini 1.5 Pro',
-    provider: 'Google Generative AI',
-    providerId: 'google'
+    id: 'google/gemini-flash-1.5-8b',
+    name: 'Gemini Flash 1.5 8B',
+    provider: 'openrouter',
+    providerId: 'openrouter'
   },
   {
-    id: 'llama3-groq-8b-8192-tool-use-preview',
-    name: 'LLama 3 Groq 8B Tool Use',
-    provider: 'Groq',
-    providerId: 'groq'
+    id: 'meta-llama/llama-3-70b-instruct',
+    name: 'LLama 3 70B Instruct',
+    provider: 'openrouter',
+    providerId: 'openrouter'
   },
   {
     id: 'qwen2.5',
