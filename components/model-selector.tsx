@@ -11,22 +11,27 @@ import {
 } from './ui/select'
 import Image from 'next/image'
 import { Model, models } from '@/lib/types/models'
-import { createModelId } from '@/lib/utils'
 
 interface ModelSelectorProps {
   selectedModelId: string
   onModelChange: (id: string) => void
 }
 
-function groupModelsByProvider(models: Model[]) {
+function groupModelsByCategory(models: Model[]) {
   return models.reduce((groups, model) => {
-    const provider = model.provider
-    if (!groups[provider]) {
-      groups[provider] = []
+    const category = model.category
+    if (!groups[category]) {
+      groups[category] = []
     }
-    groups[provider].push(model)
+    groups[category].push(model)
     return groups
   }, {} as Record<string, Model[]>)
+}
+
+const categoryLabels: Record<string, string> = {
+  speed: 'Speed',
+  balanced: 'Balanced',
+  quality: 'Quality'
 }
 
 export function ModelSelector({
@@ -37,7 +42,7 @@ export function ModelSelector({
     onModelChange(id)
   }
 
-  const groupedModels = groupModelsByProvider(models)
+  const groupedModels = groupModelsByCategory(models)
 
   return (
     <div className="absolute -top-8 left-2">
@@ -50,17 +55,13 @@ export function ModelSelector({
           <SelectValue placeholder="Select model" />
         </SelectTrigger>
         <SelectContent className="max-h-[300px] overflow-y-auto">
-          {Object.entries(groupedModels).map(([provider, models]) => (
-            <SelectGroup key={provider}>
+          {Object.entries(groupedModels).map(([category, categoryModels]) => (
+            <SelectGroup key={category}>
               <SelectLabel className="text-xs sticky top-0 bg-background z-10">
-                {provider}
+                {categoryLabels[category]}
               </SelectLabel>
-              {models.map(model => (
-                <SelectItem
-                  key={createModelId(model)}
-                  value={createModelId(model)}
-                  className="py-2"
-                >
+              {categoryModels.map((model: Model) => (
+                <SelectItem key={model.id} value={model.id} className="py-2">
                   <div className="flex items-center space-x-1">
                     <Image
                       src={`/providers/logos/${model.providerId}.svg`}
@@ -69,7 +70,7 @@ export function ModelSelector({
                       height={18}
                       className="bg-white rounded-full border"
                     />
-                    <span className="text-xs font-medium">{model.name}</span>
+                    <span className="text-xs font-medium">{model.id}</span>
                   </div>
                 </SelectItem>
               ))}

@@ -32,4 +32,13 @@ server:
 
 search:
   formats:
-    - json  
+    - json
+engines:
+  - name: google
+    engine: google
+  - name: bing
+    engine: bing
+  - name: duckduckgo
+    engine: duckduckgo
+  - name: wikipedia
+    engine: wikipedia

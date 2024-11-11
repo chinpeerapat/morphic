@@ -3,61 +3,42 @@ export interface Model {
   name: string
   provider: string
   providerId: string
+  category: 'speed' | 'quality' | 'balanced'
 }
+
+// Get provider configuration from environment variables or use defaults
+const PROVIDER_NAME =
+  process.env.NEXT_PUBLIC_PROVIDER_NAME || 'OpenAI-Compatible'
+const PROVIDER_ID = process.env.NEXT_PUBLIC_PROVIDER_ID || 'openai-compatible'
+
+// Get model IDs from environment variables or use defaults
+const SPEED_MODEL_ID =
+  process.env.NEXT_PUBLIC_MODEL_SPEED || 'openai/gpt-4o-mini'
+const BALANCED_MODEL_ID =
+  process.env.NEXT_PUBLIC_MODEL_BALANCED || 'anthropic/claude-3-5-haiku'
+const QUALITY_MODEL_ID =
+  process.env.NEXT_PUBLIC_MODEL_QUALITY || 'anthropic/claude-3-5-sonnet'
 
 export const models: Model[] = [
   {
-    id: 'openai/gpt-4o',
-    name: 'GPT-4o',
-    provider: 'openrouter',
-    providerId: 'openrouter'
+    id: BALANCED_MODEL_ID,
+    name: 'Balanced',
+    provider: PROVIDER_NAME,
+    providerId: PROVIDER_ID,
+    category: 'balanced'
   },
   {
-    id: 'openai/gpt-4o-mini',
-    name: 'GPT-4o mini',
-    provider: 'openrouter',
-    providerId: 'openrouter'
+    id: SPEED_MODEL_ID,
+    name: 'Speed',
+    provider: PROVIDER_NAME,
+    providerId: PROVIDER_ID,
+    category: 'speed'
   },
   {
-    id: 'anthropic/claude-3.5-sonnet:beta',
-    name: 'Claude 3.5 Sonnet',
-    provider: 'openrouter',
-    providerId: 'openrouter'
-  },
-  {
-    id: 'anthropic/claude-3-5-haiku-20241022',
-    name: 'Claude 3.5 Haiku',
-    provider: 'openrouter',
-    providerId: 'openrouter'
-  },
-  {
-    id: 'google/gemini-flash-1.5-8b',
-    name: 'Gemini Flash 1.5 8B',
-    provider: 'openrouter',
-    providerId: 'openrouter'
-  },
-  {
-    id: 'meta-llama/llama-3-70b-instruct',
-    name: 'LLama 3 70B Instruct',
-    provider: 'openrouter',
-    providerId: 'openrouter'
-  },
-  {
-    id: 'qwen2.5',
-    name: 'Qwen 2.5',
-    provider: 'Ollama',
-    providerId: 'ollama'
-  },
-  {
-    id: 'gpt-4o',
-    name: 'GPT-4o',
-    provider: 'Azure',
-    providerId: 'azure'
-  },
-  {
-    id: process.env.NEXT_PUBLIC_OPENAI_COMPATIBLE_MODEL || 'undefined',
-    name: process.env.NEXT_PUBLIC_OPENAI_COMPATIBLE_MODEL || 'Undefined',
-    provider: 'OpenAI Compatible',
-    providerId: 'openai-compatible'
+    id: QUALITY_MODEL_ID,
+    name: 'Quality',
+    provider: PROVIDER_NAME,
+    providerId: PROVIDER_ID,
+    category: 'quality'
   }
 ]
