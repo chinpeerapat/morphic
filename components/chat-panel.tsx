@@ -125,6 +125,9 @@ export function ChatPanel({ messages, query, onModelChange }: ChatPanelProps) {
     inputRef.current?.focus()
   }, [])
 
+  // Add state for Thai enhancement
+  const [enhanceThaiOutput, setEnhanceThaiOutput] = useState(false)
+
   // If there are messages and the new button has not been pressed, display the new Button
   if (messages.length > 0) {
     return (
@@ -234,6 +237,27 @@ export function ChatPanel({ messages, query, onModelChange }: ChatPanelProps) {
           }}
           className={cn(showEmptyScreen ? 'visible' : 'invisible')}
         />
+        <div className="fixed inset-x-0 bottom-0 bg-gradient-to-b from-muted/10 from-10% to-muted/30 to-50%">
+          <div className="mx-auto sm:max-w-2xl sm:px-4">
+            <div className="px-4 py-2 flex items-center justify-end">
+              <div className="flex items-center space-x-2">
+                <label
+                  htmlFor="enhance-thai"
+                  className="text-sm text-muted-foreground"
+                >
+                  Enhance Thai Output
+                </label>
+                <input
+                  id="enhance-thai"
+                  type="checkbox"
+                  checked={enhanceThaiOutput}
+                  onChange={e => setEnhanceThaiOutput(e.target.checked)}
+                  className="rounded border-gray-300 text-primary focus:ring-primary"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
       </form>
     </div>
   )

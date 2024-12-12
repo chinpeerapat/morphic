@@ -3,9 +3,11 @@
 import { StreamableValue } from 'ai/rsc'
 import type { UIState } from '@/app/actions'
 import { CollapsibleMessage } from './collapsible-message'
+import { useCallback } from 'react'
 
 interface ChatMessagesProps {
   messages: UIState
+  enhanceThaiOutput: boolean
 }
 
 type GroupedMessage = {
@@ -14,7 +16,30 @@ type GroupedMessage = {
   isCollapsed?: StreamableValue<boolean> | undefined
 }
 
-export function ChatMessages({ messages }: ChatMessagesProps) {
+async function enhanceThaiText(text: string) {
+  try {
+    const response = await fetch('/api/enhance-thai', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ text })
+    })
+
+    if (!response.ok) throw new Error('Enhancement failed')
+
+    const data = await response.json()
+    return data.enhancedText
+  } catch (error) {
+    console.error('Thai enhancement error:', error)
+    return text // Return original text if enhancement fails
+  }
+}
+
+export function ChatMessages({
+  messages,
+  enhanceThaiOutput
+}: ChatMessagesProps) {
   if (!messages.length) {
     return null
   }
@@ -45,6 +70,24 @@ export function ChatMessages({ messages }: ChatMessagesProps) {
     isCollapsed?: StreamableValue<boolean>
   }[]
 
+  const renderMessage = useCallback(
+    async (message: Message) => {
+      let content = message.content
+
+      // If it's an assistant message and Thai enhancement is enabled
+      if (
+        message.role === 'assistant' &&
+        enhanceThaiOutput &&
+        containsThai(content)
+      ) {
+        content = await enhanceThaiText(content)
+      }
+
+      return <Message key={message.id} role={message.role} content={content} />
+    },
+    [enhanceThaiOutput]
+  )
+
   return (
     <>
       {groupedMessagesArray.map((groupedMessage: GroupedMessage) => (
@@ -62,4 +105,9 @@ export function ChatMessages({ messages }: ChatMessagesProps) {
       ))}
     </>
   )
+}
+
+// Helper function to detect Thai text
+function containsThai(text: string) {
+  return /[\u0E00-\u0E7F]/.test(text)
 }
