@@ -1,3 +1,5 @@
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/I7-4De?referralCode=gKALTQ)
+
 # Morphic
 
 An AI-powered search engine with a generative UI.
