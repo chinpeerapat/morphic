@@ -1,6 +1,7 @@
 'use client'
 
 import 'katex/dist/katex.min.css'
+import React from 'react'
 import rehypeExternalLinks from 'rehype-external-links'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
@@ -39,15 +40,34 @@ export function BotMessage({ message }: { message: string }) {
       remarkPlugins={[remarkGfm]}
       className="prose-sm prose-neutral prose-a:text-accent-foreground/50"
       components={{
-        code({ node, inline, className, children, ...props }) {
-          if (children.length) {
-            if (children[0] == '▍') {
+        code({
+          node,
+          inline,
+          className,
+          children,
+          ...props
+        }: {
+          node?: any
+          inline?: boolean
+          className?: string
+          children?: React.ReactNode
+        }) {
+          // Safely check if children exists and is an array
+          const childArray = React.Children.toArray(children)
+
+          if (childArray.length) {
+            const firstChild = childArray[0]
+
+            if (firstChild === '▍') {
               return (
                 <span className="mt-1 cursor-default animate-pulse">▍</span>
               )
             }
 
-            children[0] = (children[0] as string).replace('`▍`', '▍')
+            // Type check and replace only if it's a string
+            if (typeof firstChild === 'string') {
+              childArray[0] = firstChild.replace('`▍`', '▍')
+            }
           }
 
           const match = /language-(\w+)/.exec(className || '')
@@ -55,7 +75,7 @@ export function BotMessage({ message }: { message: string }) {
           if (inline) {
             return (
               <code className={className} {...props}>
-                {children}
+                {childArray}
               </code>
             )
           }
@@ -64,7 +84,7 @@ export function BotMessage({ message }: { message: string }) {
             <CodeBlock
               key={Math.random()}
               language={(match && match[1]) || ''}
-              value={String(children).replace(/\n$/, '')}
+              value={String(childArray).replace(/\n$/, '')}
               {...props}
             />
           )

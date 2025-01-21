@@ -1,11 +1,10 @@
 import { cn } from '@/lib/utils'
-import { AnchorHTMLAttributes, DetailedHTMLProps, ReactNode } from 'react'
+import { ComponentProps } from 'react'
 
-type CustomLinkProps = Omit<
-  DetailedHTMLProps<AnchorHTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>,
-  'ref'
-> & {
-  children: ReactNode
+// Update the type to match what react-markdown expects
+type CustomLinkProps = ComponentProps<'a'> & {
+  href?: string
+  children?: React.ReactNode
 }
 
 export function Citing({
@@ -14,6 +13,7 @@ export function Citing({
   className,
   ...props
 }: CustomLinkProps) {
+  // Make children optional since react-markdown might not always provide it
   const childrenText = children?.toString() || ''
   const isNumber = /^\d+$/.test(childrenText)
   const linkClasses = cn(

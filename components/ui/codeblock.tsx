@@ -1,14 +1,11 @@
-// Referenced from Vercel's AI Chatbot and modified to fit the needs of this project
-// https://github.com/vercel/ai-chatbot/blob/c2757f87f986b7f15fdf75c4c89cb2219745c53f/components/ui/codeblock.tsx
-
 'use client'
 
 import { FC, memo } from 'react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { coldarkDark } from 'react-syntax-highlighter/dist/cjs/styles/prism'
 
-import { useCopyToClipboard } from '@/lib/hooks/use-copy-to-clipboard'
 import { Button } from '@/components/ui/button'
+import { useCopyToClipboard } from '@/lib/hooks/use-copy-to-clipboard'
 import { generateId } from 'ai'
 import { Check, Copy, Download } from 'lucide-react'
 
