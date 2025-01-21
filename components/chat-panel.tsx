@@ -1,7 +1,9 @@
 'use client'
 
+import { useAutoResizeTextarea } from '@/hooks/use-auto-resize-textarea'
+import { models } from '@/lib/types/models'
 import { cn } from '@/lib/utils'
-import { Message } from 'ai'
+import { Message, generateId } from 'ai'
 import { ArrowUp, Plus, Square } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
@@ -19,7 +21,7 @@ interface ChatPanelProps {
   setMessages: (messages: Message[]) => void
   query?: string
   stop: () => void
-  append: (message: any) => void
+  append: (message: Message) => void
 }
 
 export function ChatPanel({
@@ -39,6 +41,7 @@ export function ChatPanel({
   const isFirstRender = useRef(true)
   const [isComposing, setIsComposing] = useState(false) // Composition state
   const [enterDisabled, setEnterDisabled] = useState(false) // Disable Enter after composition ends
+  const [selectedModelIndex, setSelectedModelIndex] = useState(0)
 
   const handleCompositionStart = () => setIsComposing(true)
 
@@ -59,6 +62,7 @@ export function ChatPanel({
   useEffect(() => {
     if (isFirstRender.current && query && query.trim().length > 0) {
       append({
+        id: generateId(),
         role: 'user',
         content: query
       })
@@ -66,6 +70,43 @@ export function ChatPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query])
+
+  // Filter out undefined models
+  const availableModels = models.filter(
+    model => model.id !== 'undefined' && model.name !== 'Undefined'
+  )
+
+  const { textareaRef, adjustHeight } = useAutoResizeTextarea({
+    minHeight: 36,
+    maxHeight: 200
+  })
+
+  useEffect(() => {
+    adjustHeight()
+  }, [input, adjustHeight])
+
+  const toggleMode = () => {
+    setSelectedModelIndex(prev => (prev + 1) % availableModels.length)
+  }
+
+  const getModelButtonStyle = (provider: string): string => {
+    return (
+      {
+        OpenAI:
+          'bg-green-50 border-green-200 text-green-600 hover:bg-green-100',
+        Anthropic:
+          'bg-purple-50 border-purple-200 text-purple-600 hover:bg-purple-100',
+        'Google Generative AI':
+          'bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100',
+        Groq: 'bg-orange-50 border-orange-200 text-orange-600 hover:bg-orange-100',
+        Ollama: 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100',
+        Azure: 'bg-sky-50 border-sky-200 text-sky-600 hover:bg-sky-100',
+        'OpenAI Compatible':
+          'bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100'
+      }[provider] ||
+      'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+    )
+  }
 
   return (
     <div
@@ -97,58 +138,18 @@ export function ChatPanel({
           )}
           {messages.length === 0 && <ModelSelector />}
           <Textarea
-            ref={inputRef}
-            name="input"
-            rows={1}
-            maxRows={5}
-            tabIndex={0}
-            onCompositionStart={handleCompositionStart}
-            onCompositionEnd={handleCompositionEnd}
-            placeholder="Ask a question..."
-            spellCheck={false}
+            ref={textareaRef}
+            id="chat-input"
+            placeholder="Ask a question or search..."
+            className="max-w-xl w-full rounded-2xl pr-10 py-2 placeholder:text-black/70 dark:placeholder:text-white/70 border-none focus:ring text-black dark:text-white resize-none text-wrap bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 leading-[1.2] min-h-[36px]"
             value={input}
-            className="resize-none w-full min-h-12 rounded-fill bg-muted border border-input pl-4 pr-10 pt-3 pb-1 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            onChange={e => {
-              handleInputChange(e)
-              setShowEmptyScreen(e.target.value.length === 0)
-            }}
+            onChange={handleInputChange}
             onKeyDown={e => {
-              // Enter should submit the form, but disable it right after IME input confirmation
-              if (
-                e.key === 'Enter' &&
-                !e.shiftKey &&
-                !isComposing && // Not in composition
-                !enterDisabled // Not within the delay after confirmation
-              ) {
-                // Prevent the default action to avoid adding a new line
-                if (input.trim().length === 0) {
-                  e.preventDefault()
-                  return
-                }
+              if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
-                const textarea = e.target as HTMLTextAreaElement
-                textarea.form?.requestSubmit()
+                handleSubmit(e as any)
               }
             }}
-            onHeightChange={height => {
-              // Ensure inputRef.current is defined
-              if (!inputRef.current) return
-
-              // The initial height and left padding is 70px and 2rem
-              const initialHeight = 70
-              // The initial border radius is 32px
-              const initialBorder = 32
-              // The height is incremented by multiples of 20px
-              const multiple = (height - initialHeight) / 20
-
-              // Decrease the border radius by 4px for each 20px height increase
-              const newBorder = initialBorder - 4 * multiple
-              // The lowest border radius will be 8px
-              inputRef.current.style.borderRadius =
-                Math.max(8, newBorder) + 'px'
-            }}
-            onFocus={() => setShowEmptyScreen(true)}
-            onBlur={() => setShowEmptyScreen(false)}
           />
           <Button
             type={isLoading ? 'button' : 'submit'}
