@@ -43,14 +43,20 @@ export const models: Model[] = [
     providerId: 'deepseek'
   },
   {
-    id: 'gemini-1.5-pro-002',
-    name: 'Gemini 1.5 Pro',
+    id: 'gemini-2.0-pro-exp-02-05',
+    name: 'Gemini 2.0 Pro (Exp)',
     provider: 'Google Generative AI',
     providerId: 'google'
   },
   {
-    id: 'gemini-2.0-flash-exp',
-    name: 'Gemini 2.0 Flash (Experimental)',
+    id: 'gemini-2.0-flash-thinking-exp-01-21',
+    name: 'Gemini 2.0 Flash Thinking (Exp)',
+    provider: 'Google Generative AI',
+    providerId: 'google'
+  },
+  {
+    id: 'gemini-2.0-flash',
+    name: 'Gemini 2.0 Flash',
     provider: 'Google Generative AI',
     providerId: 'google'
   },
@@ -61,8 +67,8 @@ export const models: Model[] = [
     providerId: 'groq'
   },
   {
-    id: 'deepseek-r1',
-    name: 'DeepSeek R1',
+    id: process.env.NEXT_PUBLIC_OLLAMA_MODEL || 'deepseek-r1',
+    name: process.env.NEXT_PUBLIC_OLLAMA_MODEL || 'DeepSeek R1',
     provider: 'Ollama',
     providerId: 'ollama'
   },
