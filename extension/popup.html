@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Morphic AI Assistant</title>
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header class="header">
+        <div class="logo">
+          <img src="icons/icon-48.png" alt="Morphic AI" />
+          <span>Morphic AI</span>
+        </div>
+        <div>
+          <button
+            id="settings-button"
+            class="button button-ghost button-icon"
+            title="Settings"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+              ></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+          <button
+            id="chat-list-button"
+            class="button button-ghost button-icon"
+            title="Chat History"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+              <path d="M6 8h.01"></path>
+              <path d="M10 8h.01"></path>
+              <path d="M14 8h.01"></path>
+              <path d="M18 8h.01"></path>
+              <path d="M6 12h.01"></path>
+              <path d="M10 12h.01"></path>
+              <path d="M14 12h.01"></path>
+              <path d="M18 12h.01"></path>
+              <path d="M6 16h.01"></path>
+              <path d="M10 16h.01"></path>
+              <path d="M14 16h.01"></path>
+              <path d="M18 16h.01"></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="main">
+        <div id="chat-container" class="chat-container">
+          <!-- Messages will be added here dynamically -->
+          <div class="message message-assistant">
+            <div class="message-content">
+              Hello! I'm Morphic AI Assistant. How can I help you today?
+            </div>
+            <div class="message-meta">Morphic AI • Just now</div>
+          </div>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <div class="input-container">
+          <div class="input-wrapper">
+            <textarea
+              id="user-input"
+              class="input"
+              placeholder="Ask me anything..."
+              rows="1"
+            ></textarea>
+            <div class="input-actions">
+              <button id="send-button" class="send-button" disabled>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="m22 2-7 20-4-9-9-4Z"></path>
+                  <path d="M22 2 11 13"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+
+    <!-- Sidebar for chat history -->
+    <div id="chat-sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <h2>Chat History</h2>
+        <button id="close-chat-sidebar" class="button button-ghost button-icon">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M18 6 6 18"></path>
+            <path d="m6 6 12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="sidebar-content">
+        <div id="chat-list" class="chat-list">
+          <!-- Chat history will be added here dynamically -->
+        </div>
+      </div>
+      <div class="sidebar-footer">
+        <button
+          id="new-chat-button"
+          class="button button-primary"
+          style="width: 100%"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            style="margin-right: 8px"
+          >
+            <path d="M12 5v14"></path>
+            <path d="M5 12h14"></path>
+          </svg>
+          New Chat
+        </button>
+      </div>
+    </div>
+
+    <!-- Sidebar for settings -->
+    <div id="settings-sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <h2>Settings</h2>
+        <button
+          id="close-settings-sidebar"
+          class="button button-ghost button-icon"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M18 6 6 18"></path>
+            <path d="m6 6 12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="sidebar-content">
+        <div class="settings-container">
+          <div class="settings-group">
+            <div class="settings-group-title">Appearance</div>
+            <div class="settings-item">
+              <div class="settings-item-label">Dark Mode</div>
+              <label class="switch">
+                <input type="checkbox" id="theme-toggle" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-group">
+            <div class="settings-group-title">Search</div>
+            <div class="settings-item">
+              <div class="settings-item-label">Search Mode</div>
+              <div class="select">
+                <select id="search-mode">
+                  <option value="web">Web Search</option>
+                  <option value="chat">Chat Only</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-group">
+            <div class="settings-group-title">Models</div>
+            <div class="settings-item">
+              <div class="settings-item-label">Default Model</div>
+              <div class="select">
+                <select id="default-model">
+                  <!-- Models will be added here dynamically -->
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-group">
+            <div class="settings-group-title">Privacy</div>
+            <div class="settings-item">
+              <div class="settings-item-label">Save Chat History</div>
+              <label class="switch">
+                <input type="checkbox" id="history-toggle" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Overlay for sidebars -->
+    <div id="overlay" class="overlay"></div>
+
+    <!-- Scripts -->
+    <script src="js/api.js"></script>
+    <script src="js/popup.js"></script>
+  </body>
+</html>

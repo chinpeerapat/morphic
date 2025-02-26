@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Morphic AI Extension Test Page</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          Helvetica, Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 2rem;
+        line-height: 1.6;
+      }
+      h1 {
+        border-bottom: 1px solid #eee;
+        padding-bottom: 1rem;
+        margin-bottom: 2rem;
+      }
+      .test-section {
+        margin-bottom: 2rem;
+        padding: 1rem;
+        border: 1px solid #eee;
+        border-radius: 0.5rem;
+      }
+      button {
+        background-color: #0f172a;
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+      button:hover {
+        opacity: 0.9;
+      }
+      pre {
+        background-color: #f1f5f9;
+        padding: 1rem;
+        border-radius: 0.25rem;
+        overflow-x: auto;
+        margin-top: 1rem;
+      }
+      .result {
+        margin-top: 1rem;
+        padding: 1rem;
+        background-color: #f8fafc;
+        border-radius: 0.25rem;
+        border-left: 4px solid #0f172a;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Morphic AI Extension Test Page</h1>
+
+    <div class="test-section">
+      <h2>API Base URL Test</h2>
+      <p>Test if the extension can connect to the API.</p>
+      <button id="test-api-url">Test API Connection</button>
+      <div id="api-url-result" class="result">Results will appear here...</div>
+    </div>
+
+    <div class="test-section">
+      <h2>User Management Test</h2>
+      <p>Test user creation and retrieval.</p>
+      <button id="test-user-api">Test User API</button>
+      <div id="user-api-result" class="result">Results will appear here...</div>
+    </div>
+
+    <div class="test-section">
+      <h2>Chat Management Test</h2>
+      <p>Test chat creation and message sending.</p>
+      <button id="test-chat-api">Test Chat API</button>
+      <div id="chat-api-result" class="result">Results will appear here...</div>
+    </div>
+
+    <div class="test-section">
+      <h2>Search Test</h2>
+      <p>Test search functionality.</p>
+      <button id="test-search-api">Test Search API</button>
+      <div id="search-api-result" class="result">
+        Results will appear here...
+      </div>
+    </div>
+
+    <div class="test-section">
+      <h2>Model Management Test</h2>
+      <p>Test model retrieval.</p>
+      <button id="test-model-api">Test Model API</button>
+      <div id="model-api-result" class="result">
+        Results will appear here...
+      </div>
+    </div>
+
+    <div class="test-section">
+      <h2>Provider Status Test</h2>
+      <p>Test provider status checking.</p>
+      <button id="test-provider-api">Test Provider API</button>
+      <div id="provider-api-result" class="result">
+        Results will appear here...
+      </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', async () => {
+        // Initialize API service
+        await apiService.init()
+
+        // API URL Test
+        document
+          .getElementById('test-api-url')
+          .addEventListener('click', async () => {
+            const resultElement = document.getElementById('api-url-result')
+            try {
+              const apiBaseUrl = await apiService.getFromStorage('apiBaseUrl')
+              resultElement.innerHTML = `
+            <p>API Base URL: ${apiBaseUrl}</p>
+            <p>Status: Connected</p>
+          `
+            } catch (error) {
+              resultElement.innerHTML = `
+            <p>Error: ${error.message}</p>
+          `
+            }
+          })
+
+        // User API Test
+        document
+          .getElementById('test-user-api')
+          .addEventListener('click', async () => {
+            const resultElement = document.getElementById('user-api-result')
+            resultElement.innerHTML = 'Testing user API...'
+
+            try {
+              // Get user ID
+              const userId = await apiService.getFromStorage('userId')
+
+              // Get user
+              const user = await apiService.getUser(userId)
+
+              // Display result
+              resultElement.innerHTML = `
+            <p>User ID: ${userId}</p>
+            <pre>${JSON.stringify(user, null, 2)}</pre>
+          `
+            } catch (error) {
+              resultElement.innerHTML = `
+            <p>Error: ${error.message}</p>
+          `
+            }
+          })
+
+        // Chat API Test
+        document
+          .getElementById('test-chat-api')
+          .addEventListener('click', async () => {
+            const resultElement = document.getElementById('chat-api-result')
+            resultElement.innerHTML = 'Testing chat API...'
+
+            try {
+              // Create a new chat
+              const chat = await apiService.createChat({
+                title: 'Test Chat',
+                messages: [
+                  {
+                    role: 'assistant',
+                    content: 'Hello! This is a test chat.'
+                  }
+                ]
+              })
+
+              // Send a message
+              const response = await apiService.sendChatMessage(
+                chat.id,
+                'This is a test message',
+                null,
+                'chat'
+              )
+
+              // Display result
+              resultElement.innerHTML = `
+            <p>Chat ID: ${chat.id}</p>
+            <p>Message sent successfully</p>
+            <pre>${JSON.stringify(response, null, 2)}</pre>
+          `
+            } catch (error) {
+              resultElement.innerHTML = `
+            <p>Error: ${error.message}</p>
+          `
+            }
+          })
+
+        // Search API Test
+        document
+          .getElementById('test-search-api')
+          .addEventListener('click', async () => {
+            const resultElement = document.getElementById('search-api-result')
+            resultElement.innerHTML = 'Testing search API...'
+
+            try {
+              // Perform a search
+              const searchResults = await apiService.search(
+                'Morphic AI Assistant'
+              )
+
+              // Display result
+              resultElement.innerHTML = `
+            <p>Search completed successfully</p>
+            <pre>${JSON.stringify(searchResults, null, 2)}</pre>
+          `
+            } catch (error) {
+              resultElement.innerHTML = `
+            <p>Error: ${error.message}</p>
+          `
+            }
+          })
+
+        // Model API Test
+        document
+          .getElementById('test-model-api')
+          .addEventListener('click', async () => {
+            const resultElement = document.getElementById('model-api-result')
+            resultElement.innerHTML = 'Testing model API...'
+
+            try {
+              // Get models
+              const models = await apiService.getModels()
+
+              // Display result
+              resultElement.innerHTML = `
+            <p>Models retrieved successfully</p>
+            <pre>${JSON.stringify(models, null, 2)}</pre>
+          `
+            } catch (error) {
+              resultElement.innerHTML = `
+            <p>Error: ${error.message}</p>
+          `
+            }
+          })
+
+        // Provider API Test
+        document
+          .getElementById('test-provider-api')
+          .addEventListener('click', async () => {
+            const resultElement = document.getElementById('provider-api-result')
+            resultElement.innerHTML = 'Testing provider API...'
+
+            try {
+              // Get providers
+              const providers = await apiService.getProviders()
+
+              // Display result
+              resultElement.innerHTML = `
+            <p>Providers retrieved successfully</p>
+            <pre>${JSON.stringify(providers, null, 2)}</pre>
+          `
+            } catch (error) {
+              resultElement.innerHTML = `
+            <p>Error: ${error.message}</p>
+          `
+            }
+          })
+      })
+    </script>
+  </body>
+</html>
