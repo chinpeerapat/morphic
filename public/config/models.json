@@ -62,7 +62,7 @@
       "provider": "Google Generative AI",
       "providerId": "google",
       "enabled": true,
-      "toolCallType": "native"
+      "toolCallType": "manual"
     },
     {
       "id": "gemini-2.0-pro-exp-02-05",
@@ -92,7 +92,7 @@
       "toolCallModel": "accounts/fireworks/models/llama-v3p1-8b-instruct"
     },
     {
-      "id": "deepseek-r1",
+      "id": "deepseek-reasoner",
       "name": "DeepSeek R1",
       "provider": "DeepSeek",
       "providerId": "deepseek",
@@ -102,11 +102,11 @@
     },
     {
       "id": "deepseek-chat",
-      "name": "DeepSeek Chat",
+      "name": "DeepSeek V3",
       "provider": "DeepSeek",
       "providerId": "deepseek",
       "enabled": true,
-      "toolCallType": "native"
+      "toolCallType": "manual"
     },
     {
       "id": "deepseek-r1-distill-llama-70b",
