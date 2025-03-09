@@ -38,6 +38,8 @@ An AI-powered search engine with a generative UI.
 
 ### AI Providers
 
+The following AI providers are supported:
+
 - OpenAI (Default)
 - Google Generative AI
 - Azure OpenAI
@@ -46,7 +48,10 @@ An AI-powered search engine with a generative UI.
 - Groq
 - DeepSeek
 - Fireworks
+- xAI (Grok)
 - OpenAI Compatible
+
+Models are configured in `public/config/models.json`. Each model requires its corresponding API key to be set in the environment variables. See [Configuration Guide](docs/CONFIGURATION.md) for details.
 
 ### Search Capabilities
 
@@ -143,11 +148,34 @@ Visit http://localhost:3000 in your browser.
 
 ## 🌐 Deploy
 
-Host your own live version of Morphic with Vercel or Cloudflare Pages.
+Host your own live version of Morphic with Vercel, Cloudflare Pages, or Docker.
 
 ### Vercel
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fmiurla%2Fmorphic&env=OPENAI_API_KEY,TAVILY_API_KEY,UPSTASH_REDIS_REST_URL,UPSTASH_REDIS_REST_TOKEN)
+
+### Docker Prebuilt Image
+
+Prebuilt Docker images are available on GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/miurla/morphic:latest
+```
+
+You can use it with docker-compose:
+
+```yaml
+services:
+  morphic:
+    image: ghcr.io/miurla/morphic:latest
+    env_file: .env.local
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./models.json:/app/public/config/models.json # Optional: Override default model configuration
+```
+
+The default model configuration is located at `public/config/models.json`. For Docker deployment, you can create `models.json` alongside `.env.local` to override the default configuration.
 
 ## 🔎 Search Engine
 
@@ -193,6 +221,9 @@ This will allow you to use Morphic as your default search engine in the browser.
 - DeepSeek
   - DeepSeek V3
   - DeepSeek R1
+- xAI
+  - grok-2
+  - grok-2-vision
 
 ## ⚡ AI SDK Implementation
 

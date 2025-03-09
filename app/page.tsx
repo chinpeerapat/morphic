@@ -1,7 +1,9 @@
 import { Chat } from '@/components/chat'
+import { getModels } from '@/lib/config/models'
 import { generateId } from 'ai'
 
-export default function Page() {
+export default async function Page() {
   const id = generateId()
-  return <Chat id={id} />
+  const models = await getModels()
+  return <Chat id={id} models={models} />
 }

@@ -16,6 +16,11 @@ export function createManualToolStreamResponse(config: BaseStreamConfig) {
   return createDataStreamResponse({
     execute: async (dataStream: DataStreamWriter) => {
       const { messages, model, chatId, searchMode } = config
+      const modelId = `${model.providerId}:${model.id}`
+      let toolCallModelId = model.toolCallModel
+        ? `${model.providerId}:${model.toolCallModel}`
+        : modelId
+
       try {
         const coreMessages = convertToCoreMessages(messages)
         const truncatedMessages = truncateMessages(
@@ -27,15 +32,19 @@ export function createManualToolStreamResponse(config: BaseStreamConfig) {
           await executeToolCall(
             truncatedMessages,
             dataStream,
-            model,
+            toolCallModelId,
             searchMode
           )
 
         const researcherConfig = manualResearcher({
           messages: [...truncatedMessages, ...toolCallMessages],
-          model,
+          model: modelId,
           isSearchEnabled: searchMode
         })
+
+        // Variables to track the reasoning timing.
+        let reasoningStartTime: number | null = null
+        let reasoningDuration: number | null = null
 
         const result = streamText({
           ...researcherConfig,
@@ -46,7 +55,10 @@ export function createManualToolStreamResponse(config: BaseStreamConfig) {
                 role: 'data',
                 content: {
                   type: 'reasoning',
-                  data: result.reasoning
+                  data: {
+                    time: reasoningDuration ?? 0,
+                    reasoning: result.reasoning
+                  }
                 } as JSONValue
               }
             ]
@@ -54,12 +66,31 @@ export function createManualToolStreamResponse(config: BaseStreamConfig) {
             await handleStreamFinish({
               responseMessages: result.response.messages,
               originalMessages: messages,
-              model,
+              model: modelId,
               chatId,
               dataStream,
               skipRelatedQuestions: true,
               annotations
             })
+          },
+          onChunk(event) {
+            const chunkType = event.chunk?.type
+
+            if (chunkType === 'reasoning') {
+              if (reasoningStartTime === null) {
+                reasoningStartTime = Date.now()
+              }
+            } else {
+              if (reasoningStartTime !== null) {
+                const elapsedTime = Date.now() - reasoningStartTime
+                reasoningDuration = elapsedTime
+                dataStream.writeMessageAnnotation({
+                  type: 'reasoning',
+                  data: { time: elapsedTime }
+                } as JSONValue)
+                reasoningStartTime = null
+              }
+            }
           }
         })
 
