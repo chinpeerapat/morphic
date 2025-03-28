@@ -1,7 +1,7 @@
 import { JSONValue, Message, ToolInvocation } from 'ai'
 import { useMemo } from 'react'
 import { AnswerSection } from './answer-section'
-import { ReasoningAnswerSection } from './reasoning-answer-section'
+import { ReasoningSection } from './reasoning-section'
 import RelatedQuestions from './related-questions'
 import { ToolSection } from './tool-section'
 import { UserMessage } from './user-message'
@@ -88,36 +88,11 @@ export function RenderMessage({
     return 0
   }, [reasoningAnnotation])
 
-  const reasoningResult = useMemo(() => {
-    if (!reasoningAnnotation) return message.reasoning
-    if (
-      typeof reasoningAnnotation.data === 'object' &&
-      reasoningAnnotation.data !== null
-    ) {
-      return reasoningAnnotation.data.reasoning ?? message.reasoning
-    }
-    return message.reasoning
-  }, [reasoningAnnotation, message.reasoning])
-
   if (message.role === 'user') {
     return <UserMessage message={message.content} />
   }
 
-  if (message.toolInvocations?.length) {
-    return (
-      <>
-        {message.toolInvocations.map(tool => (
-          <ToolSection
-            key={tool.toolCallId}
-            tool={tool}
-            isOpen={getIsOpen(messageId)}
-            onOpenChange={open => onOpenChange(messageId, open)}
-          />
-        ))}
-      </>
-    )
-  }
-
+  // New way: Use parts instead of toolInvocations
   return (
     <>
       {toolData.map(tool => (
@@ -128,35 +103,54 @@ export function RenderMessage({
           onOpenChange={open => onOpenChange(tool.toolCallId, open)}
         />
       ))}
-      {reasoningResult ? (
-        <ReasoningAnswerSection
-          content={{
-            reasoning: reasoningResult,
-            answer: message.content,
-            time: reasoningTime
-          }}
-          isOpen={getIsOpen(messageId)}
-          onOpenChange={open => onOpenChange(messageId, open)}
-          chatId={chatId}
-        />
-      ) : (
-        <AnswerSection
-          content={message.content}
-          isOpen={getIsOpen(messageId)}
-          onOpenChange={open => onOpenChange(messageId, open)}
-          chatId={chatId}
+      {message.parts?.map((part, index) => {
+        switch (part.type) {
+          case 'tool-invocation':
+            return (
+              <ToolSection
+                key={`${messageId}-tool-${index}`}
+                tool={part.toolInvocation}
+                isOpen={getIsOpen(part.toolInvocation.toolCallId)}
+                onOpenChange={open =>
+                  onOpenChange(part.toolInvocation.toolCallId, open)
+                }
+              />
+            )
+          case 'text':
+            return (
+              <AnswerSection
+                key={`${messageId}-text-${index}`}
+                content={part.text}
+                isOpen={getIsOpen(messageId)}
+                onOpenChange={open => onOpenChange(messageId, open)}
+                chatId={chatId}
+              />
+            )
+          case 'reasoning':
+            return (
+              <ReasoningSection
+                key={`${messageId}-reasoning-${index}`}
+                content={{
+                  reasoning: part.reasoning,
+                  time: reasoningTime
+                }}
+                isOpen={getIsOpen(messageId)}
+                onOpenChange={open => onOpenChange(messageId, open)}
+              />
+            )
+          // Add other part types as needed
+          default:
+            return null
+        }
+      })}
+      {relatedQuestions && relatedQuestions.length > 0 && (
+        <RelatedQuestions
+          annotations={relatedQuestions as JSONValue[]}
+          onQuerySelect={onQuerySelect}
+          isOpen={getIsOpen(`${messageId}-related`)}
+          onOpenChange={open => onOpenChange(`${messageId}-related`, open)}
         />
       )}
-      {!message.toolInvocations &&
-        relatedQuestions &&
-        relatedQuestions.length > 0 && (
-          <RelatedQuestions
-            annotations={relatedQuestions as JSONValue[]}
-            onQuerySelect={onQuerySelect}
-            isOpen={getIsOpen(`${messageId}-related`)}
-            onOpenChange={open => onOpenChange(`${messageId}-related`, open)}
-          />
-        )}
     </>
   )
 }

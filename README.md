@@ -1,6 +1,6 @@
 # One-click Deployment on Railway
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/I7-4De?referralCode=gKALTQ)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/I7-4De?referralCode=chin)
 
 # Morphic
 
@@ -207,7 +207,7 @@ This will allow you to use Morphic as your default search engine in the browser.
   - gpt-4-turbo
   - gpt-3.5-turbo
 - Google
-  - Gemini 2.0 Pro (Experimental)
+  - Gemini 2.5 Pro (Experimental)
   - Gemini 2.0 Flash Thinking (Experimental)
   - Gemini 2.0 Flash
 - Anthropic
