@@ -154,8 +154,8 @@
     {
       "id": "scb10x/llama3.1-typhoon2-70b-instruct",
       "name": "Typhoon2-70B",
-      "provider": "openrouter",
-      "providerId": "openrouter",
+      "provider": "openai-compatible",
+      "providerId": "openai-compatible",
       "enabled": true,
       "toolCallType": "native"
     }
