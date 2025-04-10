@@ -152,10 +152,10 @@
       "toolCallType": "native"
     },
     {
-      "id": "<OPENAI_COMPATIBLE_MODEL>",
-      "name": "<OPENAI_COMPATIBLE_MODEL>",
-      "provider": "OpenAI Compatible",
-      "providerId": "openai-compatible",
+      "id": "scb10x/llama3.1-typhoon2-70b-instruct",
+      "name": "Typhoon2-70B",
+      "provider": "openrouter",
+      "providerId": "openrouter",
       "enabled": true,
       "toolCallType": "native"
     }
