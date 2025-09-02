@@ -1,6 +1,14 @@
 {
   "models": [
     {
+      "id": "gpt-5",
+      "name": "GPT-5",
+      "provider": "OpenAI",
+      "providerId": "openai",
+      "enabled": true,
+      "toolCallType": "native"
+    },
+    {
       "id": "gpt-4.1",
       "name": "GPT-4.1",
       "provider": "OpenAI",
