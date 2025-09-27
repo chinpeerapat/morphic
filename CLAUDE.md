@@ -13,6 +13,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `bun typecheck` - Run TypeScript type checking
 - `bun format` - Format code with Prettier
 - `bun format:check` - Check code formatting without modifying files
+- `bun migrate` - Run database migrations
+- `bun test` - Run tests with Vitest
+- `bun test:watch` - Run tests in watch mode
 
 ### Docker
 
@@ -25,8 +28,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Next.js 15.2.3** with App Router and React Server Components
 - **React 19.0.0** with TypeScript for type safety
-- **Vercel AI SDK 4.3.6** for AI streaming and GenerativeUI
+- **Vercel AI SDK 5.0.0-alpha.2** for AI streaming and GenerativeUI
 - **Supabase** for authentication and backend services
+- **PostgreSQL** with Drizzle ORM for database
 - **Redis** (Upstash or local) for chat history storage
 - **Tailwind CSS** with shadcn/ui components
 
@@ -45,19 +49,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - `/lib/tools/` - Search and retrieval tool implementations
    - Models configured in `public/config/models.json`
 
-3. **Search System**
+3. **Database** (`/lib/db`)
+   - PostgreSQL database with Drizzle ORM
+   - Schema defined in `/lib/db/schema.ts`
+   - Migrations in `/lib/db/migrations/`
+   - Database actions in `/lib/actions/chat-db.ts`
+
+4. **Search System**
    - Multiple providers: Tavily (default), SearXNG (self-hosted), Exa (neural)
    - Video search support via Serper API
    - URL-specific search capabilities
    - Configurable search depth and result limits
 
-4. **Component Organization** (`/components`)
+5. **Component Organization** (`/components`)
    - `/artifact/` - Search result and AI response display components
    - `/sidebar/` - Chat history and navigation
    - `/ui/` - Reusable UI components from shadcn/ui
    - Feature-specific components (auth forms, chat interfaces)
 
-5. **State Management**
+6. **State Management**
    - Server-side state via React Server Components
    - Client-side hooks in `/hooks/`
    - Redis for persistent chat history
@@ -70,11 +80,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 OPENAI_API_KEY=      # Default AI provider
 TAVILY_API_KEY=      # Default search provider
+DATABASE_URL=        # PostgreSQL connection string
 ```
 
 ### Optional Features
 
-- Chat history: Set `NEXT_PUBLIC_ENABLE_SAVE_CHAT_HISTORY=true` and configure Redis
+- Chat history: Set `ENABLE_SAVE_CHAT_HISTORY=true` and configure Redis
 - Alternative AI providers: Add corresponding API keys (ANTHROPIC_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY, etc.)
 - Alternative search: Configure SEARCH_API and provider-specific settings
 - Sharing: Set `NEXT_PUBLIC_ENABLE_SHARE=true`
@@ -89,11 +100,10 @@ TAVILY_API_KEY=      # Default search provider
 
 ## Testing Approach
 
-Currently no dedicated test framework. Verify changes by:
-
-1. Running `bun lint` to check code quality
-2. Building with `bun run build` to catch TypeScript errors
-3. Manual testing in development mode
+- Unit and integration tests with Vitest
+- Test files located alongside source files with `.test.ts` or `.test.tsx` extension
+- Run `bun test` to execute all tests
+- Run `bun test:watch` for development
 
 ## Pre-PR Requirements
 
@@ -103,6 +113,7 @@ Before creating a pull request, you MUST ensure all of the following checks pass
 2. **Type checking**: Run `bun typecheck` to ensure no TypeScript errors
 3. **Formatting**: Run `bun format:check` to verify code formatting (or `bun format` to auto-fix)
 4. **Build**: Run `bun run build` to ensure the application builds successfully
+5. **Tests**: Run `bun test` to ensure all tests pass
 
 These checks are enforced in CI/CD and PRs will fail if any of these steps don't pass.
 
@@ -119,11 +130,9 @@ Models are defined in `public/config/models.json` with:
 - `toolCallType`: "native" or "manual" for function calling
 - `toolCallModel`: Optional override for tool calls
 
-## Database Policies
+## Database Management
 
-When working with Supabase, follow the cursor rules in `.cursor/rules/` for:
-
-- Creating migrations
-- Setting up RLS policies
-- Writing edge functions
-- SQL style guide
+- Run `bun migrate` to apply database migrations
+- Migrations are located in `/drizzle/` directory
+- Schema changes should be made in `/lib/db/schema.ts`
+- Use Drizzle Kit for generating migrations

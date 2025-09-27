@@ -100,22 +100,30 @@ export const Section: React.FC<SectionProps> = ({
 export function ToolArgsSection({
   children,
   tool,
-  number
+  number,
+  isLoading
 }: {
   children: React.ReactNode
   tool: string
   number?: number
+  isLoading?: boolean
 }) {
   return (
     <Section
       size="sm"
-      className="py-0 flex items-center justify-between w-full"
+      className="py-0 flex items-center justify-between w-full gap-2 overflow-hidden"
     >
-      <ToolBadge tool={tool}>{children}</ToolBadge>
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <ToolBadge tool={tool} isLoading={isLoading}>
+          {children}
+        </ToolBadge>
+      </div>
       {number && number > 0 && (
-        <StatusIndicator icon={Check} iconClassName="text-green-500">
-          {number} results
-        </StatusIndicator>
+        <div className="shrink-0">
+          <StatusIndicator icon={Check} iconClassName="text-green-500">
+            {number} results
+          </StatusIndicator>
+        </div>
       )}
     </Section>
   )
