@@ -11,9 +11,7 @@ export function getSupabasePublishableKey() {
 }
 
 export function getSupabaseSecretKey() {
-  return (
-    readEnv('SUPABASE_SECRET_KEY') ?? readEnv('SUPABASE_SERVICE_ROLE_KEY')
-  )
+  return readEnv('SUPABASE_SECRET_KEY') ?? readEnv('SUPABASE_SERVICE_ROLE_KEY')
 }
 
 export function getSupabaseUrl() {

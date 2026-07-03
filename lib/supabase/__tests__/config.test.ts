@@ -23,7 +23,9 @@ describe('warnAboutSupabaseAuthConfig', () => {
     warnAboutSupabaseAuthConfig()
 
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('ENABLE_AUTH=false keeps the app in anonymous mode')
+      expect.stringContaining(
+        'ENABLE_AUTH=false keeps the app in anonymous mode'
+      )
     )
   })
 
@@ -39,7 +41,9 @@ describe('warnAboutSupabaseAuthConfig', () => {
     warnAboutSupabaseAuthConfig()
 
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('ENABLE_AUTH=true but Supabase is not fully configured')
+      expect.stringContaining(
+        'ENABLE_AUTH=true but Supabase is not fully configured'
+      )
     )
   })
 })
