@@ -1,3 +1,4 @@
+import { warnAboutSupabaseAuthConfig } from '@/lib/supabase/config'
 import { hasSupabasePublicConfig } from '@/lib/supabase/keys'
 import { createClient } from '@/lib/supabase/server'
 import { perfLog } from '@/lib/utils/perf-logging'
@@ -14,6 +15,8 @@ export async function getCurrentUser() {
 }
 
 export async function getCurrentUserId() {
+  warnAboutSupabaseAuthConfig()
+
   const count = incrementAuthCallCount()
   perfLog(`getCurrentUserId called - count: ${count}`)
 
