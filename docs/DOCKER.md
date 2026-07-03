@@ -105,17 +105,14 @@ To enable Supabase authentication for multi-user deployments:
 2. Build from source with the Supabase environment variables:
 
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
-SUPABASE_SECRET_KEY=your-supabase-secret-key
-ENABLE_AUTH=true
-```
-
-3. Build and start:
-
-```bash
+NEXT_PUBLIC_SUPABASE_URL=your-supabase-url \
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key \
+SUPABASE_SECRET_KEY=your-supabase-secret-key \
+ENABLE_AUTH=true \
 docker compose up -d --build
 ```
+
+Legacy Supabase env names (`NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) also work.
 
 **Note**: The prebuilt image does not support authentication because `NEXT_PUBLIC_*` variables are embedded at build time by Next.js. You must build from source to enable authentication.
 

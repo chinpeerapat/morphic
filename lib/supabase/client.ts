@@ -1,11 +1,11 @@
 import { createBrowserClient } from '@supabase/ssr'
 
-import { getSupabasePublishableKey } from './keys'
+import { getSupabasePublishableKey, getSupabaseUrl } from './keys'
 
 let warnedOnce = false
 
 export function createClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const url = getSupabaseUrl()
   const key = getSupabasePublishableKey()
 
   if (!url || !key) {
