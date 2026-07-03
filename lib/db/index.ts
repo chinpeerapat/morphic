@@ -2,6 +2,10 @@ import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
+import {
+  isDatabaseBuildPhase,
+  resolveDatabaseConnectionString
+} from './connection-string'
 import * as relations from './relations'
 import * as schema from './schema'
 
@@ -9,29 +13,9 @@ import * as schema from './schema'
 // Use restricted user for application if available, otherwise fall back to regular user
 const isDevelopment = process.env.NODE_ENV === 'development'
 const isTest = process.env.NODE_ENV === 'test'
+const isBuildPhase = isDatabaseBuildPhase()
 
-if (
-  !process.env.DATABASE_URL &&
-  !process.env.DATABASE_RESTRICTED_URL &&
-  !isTest
-) {
-  throw new Error(
-    'DATABASE_URL or DATABASE_RESTRICTED_URL environment variable is not set'
-  )
-}
-
-// Connection with connection pooling for server environments
-// Prefer restricted user for application runtime
-const connectionString =
-  process.env.DATABASE_RESTRICTED_URL ?? // Prefer restricted user
-  process.env.DATABASE_URL ??
-  (isTest ? 'postgres://user:pass@localhost:5432/testdb' : undefined)
-
-if (!connectionString) {
-  throw new Error(
-    'DATABASE_URL or DATABASE_RESTRICTED_URL environment variable is not set'
-  )
-}
+const connectionString = resolveDatabaseConnectionString()
 
 // Log which connection is being used (for debugging)
 if (isDevelopment) {
@@ -47,8 +31,8 @@ if (isDevelopment) {
 // DATABASE_SSL_DISABLED=true disables SSL completely (for local/Docker PostgreSQL)
 // Default is to enable SSL with certificate verification (for cloud databases like Neon, Supabase)
 const sslConfig =
-  process.env.DATABASE_SSL_DISABLED === 'true'
-    ? false // Disable SSL entirely for local PostgreSQL
+  process.env.DATABASE_SSL_DISABLED === 'true' || isBuildPhase
+    ? false // Disable SSL entirely for local PostgreSQL and build-time placeholder
     : { rejectUnauthorized: true } // Enable SSL with verification for cloud DBs
 
 const client = postgres(connectionString, {
@@ -56,6 +40,8 @@ const client = postgres(connectionString, {
   prepare: false,
   max: 20 // Max 20 connections
 })
+
+export { resolveDatabaseConnectionString } from './connection-string'
 
 export const db = drizzle(client, {
   schema: { ...schema, ...relations }
@@ -65,7 +51,7 @@ export const db = drizzle(client, {
 export type Schema = typeof schema
 
 // Verify restricted user permissions on startup
-if (process.env.DATABASE_RESTRICTED_URL && !isTest) {
+if (process.env.DATABASE_RESTRICTED_URL && !isTest && !isBuildPhase) {
   // Only run verification in server environments, not during build
   if (typeof window === 'undefined' && process.env.NODE_ENV !== 'production') {
     ;(async () => {

@@ -217,6 +217,43 @@ SUPABASE_SECRET_KEY=[YOUR_SUPABASE_SECRET_KEY]
    - **Publishable Key**: Settings > API Keys > publishable key (`sb_publishable_...`)
    - **Secret Key**: Settings > API Keys > secret key (`sb_secret_...`)
 
+4. Configure redirect URLs in **Authentication → URL Configuration**:
+   - Site URL: your deployed app URL (for example `https://your-app.vercel.app`)
+   - Redirect URLs: `https://your-app.vercel.app/auth/oauth`, `/auth/update-password`, `/auth/confirm`
+
+### Deploying on Vercel with Supabase
+
+Use one Supabase project for **auth** and **Postgres** (chat history):
+
+1. Restore/unpause the Supabase project if it was paused.
+
+2. In **Vercel → Project → Settings → Environment Variables**, set:
+
+```bash
+# Database (Supabase → Project Settings → Database → Connection string → URI → Transaction pooler)
+DATABASE_URL=postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres
+
+# Auth
+ENABLE_AUTH=true
+NEXT_PUBLIC_SUPABASE_URL=https://[project-ref].supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+SUPABASE_SECRET_KEY=sb_secret_...
+
+# Required app keys
+OPENAI_API_KEY=...
+TAVILY_API_KEY=...
+```
+
+3. Run database migrations once from your machine using the **Direct** Supabase connection string (port 5432):
+
+```bash
+DATABASE_URL="postgresql://postgres.[project-ref]:[password]@db.[project-ref].supabase.co:5432/postgres" bun migrate
+```
+
+4. Redeploy on Vercel after changing environment variables.
+
+**Note:** `NEXT_PUBLIC_*` Supabase variables are embedded at build time. Always redeploy after updating them.
+
 ## Guest Mode
 
 Guest mode allows users to try Morphic without creating an account. Guest sessions are ephemeral — no chat history is stored.
