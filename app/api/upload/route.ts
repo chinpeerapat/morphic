@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 import { PutObjectCommand } from '@aws-sdk/client-s3'
+import { createHash } from 'node:crypto'
 
 import { capture } from '@/lib/analytics/dispatch'
 import { getCurrentUserId } from '@/lib/auth/get-current-user'
 import * as dbActions from '@/lib/db/actions'
 import {
+  detectFileMediaType,
+  isSupportedFileType,
+  type SupportedFileType
+} from '@/lib/storage/file-signature'
+import {
+  getChatFileObjectKeyPrefix,
+  getObjectContentMd5,
   getR2Client,
   getSignedFileUrl,
   isObjectStorageConfigured,
@@ -13,7 +21,6 @@ import {
 } from '@/lib/storage/r2-client'
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'application/pdf']
 
 export async function POST(req: NextRequest) {
   try {
@@ -55,14 +62,49 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    if (!ALLOWED_TYPES.includes(file.type)) {
+    if (!isSupportedFileType(file.type)) {
       return NextResponse.json(
         { error: 'Unsupported file type' },
         { status: 400 }
       )
     }
-    const result = await uploadFileToR2(file, userId, chatId)
-    if (process.env.ENABLE_AUTH === 'false') {
+    const isAnonymous = process.env.ENABLE_AUTH === 'false'
+    const buffer = Buffer.from(await file.arrayBuffer())
+
+    // The browser reports file.type from the name, so the check above says
+    // nothing about the contents. Only the bytes do, and from here on they are
+    // what the file is: sending a document to the provider as an image fails
+    // the whole turn just as surely as sending something unreadable.
+    const mediaType = detectFileMediaType(buffer)
+    if (!mediaType) {
+      return NextResponse.json(
+        {
+          error: 'Unsupported file content',
+          message:
+            'The file contents are not a JPEG, PNG, or PDF even though the file name suggests otherwise.'
+        },
+        { status: 400 }
+      )
+    }
+
+    if (!isAnonymous && chatId) {
+      const reused = await reuseExistingChatFile(
+        file,
+        buffer,
+        mediaType,
+        userId,
+        chatId
+      )
+      if (reused) {
+        return NextResponse.json(
+          { success: true, file: reused },
+          { status: 200 }
+        )
+      }
+    }
+
+    const result = await uploadFileToR2(file, buffer, mediaType, userId, chatId)
+    if (isAnonymous) {
       return NextResponse.json({ success: true, file: result }, { status: 200 })
     }
 
@@ -112,16 +154,83 @@ export async function POST(req: NextRequest) {
   }
 }
 
+/**
+ * Points a repeated upload at the copy already stored for this chat.
+ *
+ * Re-uploading the same file is the common way a conversation ends up carrying
+ * two of it, usually because the first copy went unmentioned in the reply. A
+ * fresh upload would mint a new object key, which reads as a different file
+ * everywhere downstream, so the model would be handed both copies on every
+ * later turn.
+ *
+ * Name, media type and size only narrow the search to a few stored candidates.
+ * The decision itself is a digest comparison: handing back a different file
+ * under the same name would be a silent substitution, which is a far worse
+ * outcome than the duplicate this avoids. Every candidate is compared, or two
+ * same-sized versions of one file would push each other out of the search and
+ * mint a new object on every upload.
+ *
+ * Returns null whenever no match can be confirmed, and the caller uploads.
+ */
+async function reuseExistingChatFile(
+  file: File,
+  buffer: Buffer,
+  mediaType: SupportedFileType,
+  userId: string,
+  chatId: string
+) {
+  try {
+    const candidates = await dbActions.findChatFileCandidates({
+      userId,
+      chatKeyPrefix: getChatFileObjectKeyPrefix(userId, chatId),
+      filename: file.name,
+      mediaType,
+      size: file.size
+    })
+    if (candidates.length === 0) return null
+
+    const uploadedMd5 = createHash('md5').update(buffer).digest('hex')
+
+    for (const candidate of candidates) {
+      const storedMd5 = await getObjectContentMd5(candidate.objectKey)
+      if (!storedMd5 || storedMd5 !== uploadedMd5) continue
+
+      const url = await getSignedFileUrl(candidate.objectKey)
+
+      return {
+        type: 'file',
+        filename: candidate.filename,
+        key: candidate.objectKey,
+        url,
+        mediaType: candidate.mediaType,
+        id: candidate.id,
+        size: file.size,
+        libraryFile: { ...candidate, key: candidate.objectKey, url }
+      }
+    }
+
+    return null
+  } catch (error) {
+    console.error('Duplicate upload lookup failed:', error)
+    return null
+  }
+}
+
 function sanitizeFilename(filename: string) {
   return filename.replace(/[^a-z0-9.\-_]/gi, '_').toLowerCase()
 }
 
-async function uploadFileToR2(file: File, userId: string, chatId: string) {
+async function uploadFileToR2(
+  file: File,
+  buffer: Buffer,
+  mediaType: SupportedFileType,
+  userId: string,
+  chatId: string
+) {
   const sanitizedFileName = sanitizeFilename(file.name)
-  const filePath = `${userId}/chats/${chatId}/${Date.now()}-${sanitizedFileName}`
+  const filePath = `${getChatFileObjectKeyPrefix(userId, chatId)}${Date.now()}-${sanitizedFileName}`
 
   try {
-    const buffer = Buffer.from(await file.arrayBuffer())
     const r2Client = getR2Client()
 
     await r2Client.send(
@@ -129,7 +238,7 @@ async function uploadFileToR2(file: File, userId: string, chatId: string) {
         Bucket: R2_BUCKET_NAME,
         Key: filePath,
         Body: buffer,
-        ContentType: file.type,
+        ContentType: mediaType,
         CacheControl: 'max-age=3600'
       })
     )
@@ -140,7 +249,7 @@ async function uploadFileToR2(file: File, userId: string, chatId: string) {
       filename: file.name,
       key: filePath,
       url: signedUrl,
-      mediaType: file.type,
+      mediaType,
       type: 'file'
     }
   } catch (error: any) {

@@ -1,18 +1,17 @@
 import type { LangfuseSpan } from '@langfuse/tracing'
 import { propagateAttributes, startActiveObservation } from '@langfuse/tracing'
-import type { UIMessage } from 'ai'
-import {
-  consumeStream,
-  convertToModelMessages,
-  pruneMessages,
-  smoothStream
-} from 'ai'
+import type { StreamTextOnErrorCallback, UIMessage } from 'ai'
+import { consumeStream, convertToModelMessages, smoothStream } from 'ai'
 
 import { researcher } from '@/lib/agents/researcher'
 import {
   createPublicErrorResponse,
   serializePublicError
 } from '@/lib/errors/public-error'
+import {
+  isToolFailureError,
+  serializeToolFailure
+} from '@/lib/errors/tool-error'
 import { isTracingEnabled } from '@/lib/utils/telemetry'
 
 import {
@@ -22,8 +21,17 @@ import {
 } from '../utils/context-window'
 import { isUsageLogging, logUsage } from '../utils/usage-logging'
 
+import { capHistoricalAttachments } from './helpers/cap-historical-attachments'
+import { compactHistoricalMessages } from './helpers/compact-historical-messages'
 import { convertDataPart } from './helpers/convert-data-part'
-import { stripReasoningParts } from './helpers/strip-reasoning-parts'
+import { assignDataPartNonces } from './helpers/data-part-nonce'
+import { dedupeAttachments } from './helpers/dedupe-attachments'
+import {
+  EMPTY_RESPONSE_STATUS_MESSAGE,
+  isEmptyResponse
+} from './helpers/is-empty-response'
+import { logAPICallErrorDiagnostics } from './helpers/log-api-call-error'
+import { buildStreamErrorSpanUpdate } from './helpers/stream-error-diagnostics'
 import { stripSpecFromMessages } from './helpers/strip-spec-from-messages'
 import { BaseStreamConfig } from './types'
 
@@ -53,30 +61,42 @@ export async function createEphemeralChatStreamResponse(
     // Real OTel trace ID, sent to the client in message metadata so feedback
     // scores can be attached to this trace later
     const parentTraceId = rootSpan?.traceId
+    let hasStreamError = false
+    let hasEmptyResponse = false
+    let streamError: unknown
+    // Sampled where the failure happens: the client can disconnect before the
+    // span is closed, and by then the signal no longer says whether the user
+    // cancelled this turn or the failure was the model's own.
+    let streamErrorWasCancelled = false
 
     const endTracing = async () => {
       if (rootSpan) {
+        if (hasStreamError) {
+          const update = buildStreamErrorSpanUpdate(
+            streamError,
+            streamErrorWasCancelled
+          )
+          if (update) rootSpan.update(update)
+        } else if (hasEmptyResponse) {
+          rootSpan.update({
+            level: 'ERROR',
+            statusMessage: EMPTY_RESPONSE_STATUS_MESSAGE
+          })
+        }
         rootSpan.end()
         await langfuseSpanProcessor.forceFlush()
       }
     }
 
     try {
-      const isOpenAI = `${model.providerId}:${model.id}`.startsWith('openai:')
-      const messagesWithoutSpec = stripSpecFromMessages(messages)
-      const messagesToConvert = isOpenAI
-        ? stripReasoningParts(messagesWithoutSpec)
-        : messagesWithoutSpec
+      const messagesWithNonces = assignDataPartNonces(messages)
+      const messagesWithoutSpec = stripSpecFromMessages(messagesWithNonces)
+      const messagesToConvert = dedupeAttachments(
+        capHistoricalAttachments(compactHistoricalMessages(messagesWithoutSpec))
+      )
 
       let modelMessages = await convertToModelMessages(messagesToConvert, {
         convertDataPart
-      })
-
-      modelMessages = pruneMessages({
-        messages: modelMessages,
-        reasoning: 'before-last-message',
-        toolCalls: 'before-last-2-messages',
-        emptyMessages: 'remove'
       })
 
       if (shouldTruncateMessages(modelMessages, model)) {
@@ -91,9 +111,16 @@ export async function createEphemeralChatStreamResponse(
       })
 
       const modelId = `${model.providerId}:${model.id}`
+      // AgentStreamParameters omits onError, but it reaches streamText where only
+      // stream errors, not recoverable tool errors, invoke it.
       const result = await researchAgent.stream({
         messages: modelMessages,
         abortSignal,
+        onError: ({ error }) => {
+          hasStreamError = true
+          streamError = error
+          streamErrorWasCancelled = abortSignal?.aborted ?? false
+        },
         experimental_transform: smoothStream({ chunking: 'word' }),
         ...(isUsageLogging() && {
           onStepFinish: step => {
@@ -104,6 +131,8 @@ export async function createEphemeralChatStreamResponse(
             )
           }
         })
+      } as Parameters<typeof researchAgent.stream>[0] & {
+        onError: StreamTextOnErrorCallback
       })
       result.consumeStream()
 
@@ -123,17 +152,30 @@ export async function createEphemeralChatStreamResponse(
             }
           }
         },
-        onFinish: async () => {
+        onFinish: async ({ responseMessage, isAborted }) => {
+          if (!isAborted && responseMessage) {
+            hasEmptyResponse = isEmptyResponse(responseMessage)
+          }
           await endTracing()
         },
         onError: (error: unknown) => {
+          if (isToolFailureError(error)) {
+            console.error('Ephemeral tool failure:', error)
+            return serializeToolFailure(error)
+          }
+
+          logAPICallErrorDiagnostics(error)
           console.error('Ephemeral stream response error:', error)
           return serializePublicError(error)
         },
         consumeSseStream: consumeStream
       })
     } catch (error) {
+      hasStreamError = true
+      streamError = error
+      streamErrorWasCancelled = abortSignal?.aborted ?? false
       await endTracing()
+      logAPICallErrorDiagnostics(error)
       console.error('Ephemeral stream execution error:', error)
       return createPublicErrorResponse(error, {
         status: 500,

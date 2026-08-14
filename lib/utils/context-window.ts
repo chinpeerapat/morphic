@@ -3,6 +3,8 @@ import { getEncoding, type TiktokenEncoding } from 'js-tiktoken'
 
 import { Model } from '../types/models'
 
+import { estimateAttachmentTokens } from './attachment-tokens'
+
 interface ModelContextInfo {
   contextWindow: number
   outputTokens: number
@@ -15,6 +17,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, ModelContextInfo> = {
   'gpt-4.1-mini': { contextWindow: 128000, outputTokens: 16384 },
   'gpt-4.1-nano': { contextWindow: 128000, outputTokens: 16384 },
   'gpt-4o-mini': { contextWindow: 128000, outputTokens: 16384 },
+  'gpt-5.6-luna': { contextWindow: 1050000, outputTokens: 128000 },
 
   // Anthropic Models
   'claude-opus-4': { contextWindow: 680000, outputTokens: 8192 },
@@ -52,6 +55,7 @@ const MODEL_TO_ENCODING: Record<string, TiktokenEncoding> = {
   'gpt-4.1-mini': 'cl100k_base',
   'gpt-4.1-nano': 'cl100k_base',
   'gpt-4o-mini': 'cl100k_base',
+  'gpt-5.6-luna': 'cl100k_base',
   'claude-opus-4': 'cl100k_base', // Use GPT-4 tokenizer as approximation for Claude
   'claude-sonnet-4': 'cl100k_base',
   'claude-3-7-sonnet': 'cl100k_base',
@@ -157,7 +161,22 @@ function estimateTokenCount(
   modelId?: string
 ): number {
   const text = extractTextContent(content)
-  if (!text) return 0
+  const attachmentTokens = Array.isArray(content)
+    ? content.reduce((total, part) => {
+        if (part.type !== 'file') return total
+
+        return (
+          total +
+          estimateAttachmentTokens({
+            mediaType: part.mediaType,
+            size:
+              part.data instanceof Uint8Array ? part.data.byteLength : undefined
+          })
+        )
+      }, 0)
+    : 0
+
+  if (!text) return attachmentTokens
 
   // Try to use tiktoken for accurate counting
   if (modelId) {
@@ -167,7 +186,7 @@ function estimateTokenCount(
         const tokens = encoder.encode(text)
         const tokenCount = tokens.length
         const overhead = 4 // Message formatting tokens
-        return tokenCount + overhead
+        return tokenCount + overhead + attachmentTokens
       } catch (error) {
         if (process.env.NODE_ENV === 'development') {
           console.warn(
@@ -184,7 +203,7 @@ function estimateTokenCount(
   const baseCount = Math.ceil(text.length / 4)
   const overhead = 4 // Message formatting tokens
 
-  return baseCount + overhead
+  return baseCount + overhead + attachmentTokens
 }
 
 /**

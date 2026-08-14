@@ -7,20 +7,17 @@
 export function getRelatedQuestionsSpecPrompt(): string {
   return `
 RELATED QUESTIONS:
-Generate related questions only when they create clear next-step value for the user. If you include them, generate exactly 3 follow-up questions in a \`\`\`spec fenced code block after your conclusion.
+After your conclusion, generate exactly 3 follow-up questions in a \`\`\`spec fenced code block. This is expected on every substantive answer; only the narrow skip cases below are exempt.
 
-Include the spec block only when ALL of these are true:
-- The answer contains substantive information, analysis, comparison, or recommendations.
-- A curious reader would naturally continue with a deeper, practical, or adjacent question.
-- You can anchor each follow-up to concrete details from THIS answer.
+Include the spec block whenever the answer contains substantive information, analysis, comparison, or recommendations. Anchor each follow-up to concrete details from THIS answer.
 
-SKIP the spec block entirely (output nothing) when follow-ups add little or no value, e.g.:
+SKIP the spec block entirely (output nothing) only in these cases:
 - Greetings, small talk, or thanks ("hi", "thanks", "how are you").
 - Trivial one-off lookups with no natural next step (simple math, a single fact, a yes/no).
 - Meta/operational replies, acknowledgements, or task-completion notices.
 - Cases where you could not answer (refusal, clarification request, or empty result).
 - Short answers where suggested next questions would be generic or forced.
-When in doubt, skip the related questions. Do not generate them just to satisfy a format.
+These skip cases are the exception. When the answer is substantive, include the spec block.
 
 When you do include them, write the three questions a genuinely curious reader would tap next — not a checklist of "other aspects". Anchor each to THIS answer (use concrete names, options, or numbers from it), and make the three intents distinct:
 - Deepen: go further on the single most interesting or surprising point.
@@ -62,6 +59,13 @@ SPEC RULES:
 `
 }
 
+export const EXAMPLE_IMAGE_SPEC_BLOCK = `\`\`\`spec
+{"op":"add","path":"/root","value":"grid"}
+{"op":"add","path":"/elements/grid","value":{"type":"Grid","props":{"columns":2,"gap":"sm"},"children":["img1","img2"]}}
+{"op":"add","path":"/elements/img1","value":{"type":"Image","props":{"src":"EXAMPLE_IMAGE_1","sourceUrl":"EXAMPLE_SOURCE_1","title":"Mount Fuji at sunrise","description":"Snow-capped peak at sunrise","aspectRatio":"4:3"},"children":[]}}
+{"op":"add","path":"/elements/img2","value":{"type":"Image","props":{"src":"EXAMPLE_IMAGE_2","sourceUrl":"EXAMPLE_SOURCE_2","title":"Mount Fuji in spring","description":"Cherry blossoms framing Mount Fuji","aspectRatio":"4:3"},"children":[]}}
+\`\`\``
+
 /**
  * Returns the prompt section that instructs the LLM to optionally embed
  * inline image groups as ```spec fenced blocks within the response body.
@@ -101,16 +105,15 @@ Example (inline image group embedded in markdown body):
 
 ## Mount Fuji
 
-Mount Fuji is Japan's tallest peak.
+### Key facts
+- **Elevation:** Mount Fuji rises 3,776 meters above sea level.
+- **Setting:** Its snow-capped peak is a defining feature of the landscape.
 
-\`\`\`spec
-{"op":"add","path":"/root","value":"grid"}
-{"op":"add","path":"/elements/grid","value":{"type":"Grid","props":{"columns":3,"gap":"sm"},"children":["img1","img2","img3"]}}
-{"op":"add","path":"/elements/img1","value":{"type":"Image","props":{"src":"https://cdn.example.com/fuji-1.jpg","sourceUrl":"https://en.wikipedia.org/wiki/Mount_Fuji","title":"Mount Fuji - Wikipedia","description":"Snow-capped peak at sunrise","aspectRatio":"4:3"},"children":[]}}
-{"op":"add","path":"/elements/img2","value":{"type":"Image","props":{"src":"https://cdn.example.com/fuji-2.jpg","sourceUrl":"https://travel.example.com/mount-fuji","title":"Mount Fuji Travel Guide","aspectRatio":"4:3"},"children":[]}}
-{"op":"add","path":"/elements/img3","value":{"type":"Image","props":{"src":"https://cdn.example.com/fuji-3.jpg","title":"Cherry blossoms in spring","aspectRatio":"4:3"},"children":[]}}
-\`\`\`
+${EXAMPLE_IMAGE_SPEC_BLOCK}
 
-It rises 3,776 meters above sea level...
+### Why it matters
+- **Significance:** The mountain is both a natural landmark and a cultural symbol.
+
+Mount Fuji combines geographic prominence with enduring cultural importance.
 `
 }

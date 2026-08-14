@@ -56,6 +56,15 @@ describe('context-window', () => {
         expect(maxTokens).toBe(878183)
       }
     })
+
+    test('uses the real 1.05M window for GPT-5.6 Luna', () => {
+      // (1050000 - 128000) - floor(1050000 * 0.1) = 817000
+      const maxTokens = getMaxAllowedTokens({
+        ...mockModel,
+        id: 'gpt-5.6-luna'
+      })
+      expect(maxTokens).toBe(817000)
+    })
   })
 
   describe('shouldTruncateMessages', () => {
@@ -79,6 +88,24 @@ describe('context-window', () => {
         .fill(null)
         .map(() => createMessage('user', longText)) // Total: ~120,000 tokens > 98,816 max tokens
       expect(shouldTruncateMessages(messages, mockModel)).toBe(true)
+    })
+
+    test('counts file parts toward the context window', () => {
+      const unknownModel: Model = { ...mockModel, id: 'unknown-model' }
+      const messages: ModelMessage[] = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'file',
+              mediaType: 'application/pdf',
+              data: 'https://example.com/report.pdf'
+            }
+          ]
+        }
+      ]
+
+      expect(shouldTruncateMessages(messages, unknownModel)).toBe(true)
     })
 
     test('handles null/undefined messages gracefully', () => {

@@ -1,17 +1,17 @@
 import type { LangfuseSpan } from '@langfuse/tracing'
 import { propagateAttributes, startActiveObservation } from '@langfuse/tracing'
-import {
-  consumeStream,
-  convertToModelMessages,
-  pruneMessages,
-  smoothStream
-} from 'ai'
+import type { StreamTextOnErrorCallback } from 'ai'
+import { consumeStream, convertToModelMessages, smoothStream } from 'ai'
 
 import { researcher } from '@/lib/agents/researcher'
 import {
   createPublicErrorResponse,
   serializePublicError
 } from '@/lib/errors/public-error'
+import {
+  isToolFailureError,
+  serializeToolFailure
+} from '@/lib/errors/tool-error'
 import { isTracingEnabled } from '@/lib/utils/telemetry'
 
 import { loadChat } from '../actions/chat'
@@ -25,10 +25,20 @@ import { getTextFromParts } from '../utils/message-utils'
 import { perfLog, perfTime } from '../utils/perf-logging'
 import { isUsageLogging, logUsage } from '../utils/usage-logging'
 
+import { resolveAttachmentSizes } from './helpers/attachment-sizes'
+import { capHistoricalAttachments } from './helpers/cap-historical-attachments'
+import { compactHistoricalMessages } from './helpers/compact-historical-messages'
 import { convertDataPart } from './helpers/convert-data-part'
+import { assignDataPartNonces } from './helpers/data-part-nonce'
+import { dedupeAttachments } from './helpers/dedupe-attachments'
+import {
+  EMPTY_RESPONSE_STATUS_MESSAGE,
+  isEmptyResponse
+} from './helpers/is-empty-response'
+import { logAPICallErrorDiagnostics } from './helpers/log-api-call-error'
 import { persistStreamResults } from './helpers/persist-stream-results'
 import { prepareMessages } from './helpers/prepare-messages'
-import { stripReasoningParts } from './helpers/strip-reasoning-parts'
+import { buildStreamErrorSpanUpdate } from './helpers/stream-error-diagnostics'
 import { stripSpecFromMessages } from './helpers/strip-spec-from-messages'
 import type { StreamContext } from './helpers/types'
 import { BaseStreamConfig } from './types'
@@ -84,9 +94,28 @@ export async function createChatStreamResponse(
     // Real OTel trace ID, stored in message metadata so feedback scores can
     // be attached to this trace later
     const parentTraceId = rootSpan?.traceId
+    let hasStreamError = false
+    let hasEmptyResponse = false
+    let streamError: unknown
+    // Sampled where the failure happens: the client can disconnect before the
+    // span is closed, and by then the signal no longer says whether the user
+    // cancelled this turn or the failure was the model's own.
+    let streamErrorWasCancelled = false
 
     const endTracing = async () => {
       if (rootSpan) {
+        if (hasStreamError) {
+          const update = buildStreamErrorSpanUpdate(
+            streamError,
+            streamErrorWasCancelled
+          )
+          if (update) rootSpan.update(update)
+        } else if (hasEmptyResponse) {
+          rootSpan.update({
+            level: 'ERROR',
+            statusMessage: EMPTY_RESPONSE_STATUS_MESSAGE
+          })
+        }
         rootSpan.end()
         await langfuseSpanProcessor.forceFlush()
       }
@@ -124,26 +153,21 @@ export async function createChatStreamResponse(
         searchMode
       })
 
-      // For OpenAI models, strip reasoning parts from UIMessages before conversion
-      // OpenAI's Responses API requires reasoning items and their following items to be kept together
-      // See: https://github.com/vercel/ai/issues/11036
-      const isOpenAI = context.modelId.startsWith('openai:')
-      const messagesWithoutSpec = stripSpecFromMessages(messagesToModel)
-      const messagesToConvert = isOpenAI
-        ? stripReasoningParts(messagesWithoutSpec)
-        : messagesWithoutSpec
+      const messagesWithNonces = assignDataPartNonces(messagesToModel)
+      const messagesWithoutSpec = stripSpecFromMessages(messagesWithNonces)
+      const messagesWithAttachmentSizes = await resolveAttachmentSizes(
+        messagesWithoutSpec,
+        userId
+      )
+      const messagesToConvert = dedupeAttachments(
+        capHistoricalAttachments(
+          compactHistoricalMessages(messagesWithAttachmentSizes)
+        )
+      )
 
       // Convert to model messages and apply context window management
       let modelMessages = await convertToModelMessages(messagesToConvert, {
         convertDataPart
-      })
-
-      // Prune messages to reduce token usage while keeping recent context
-      modelMessages = pruneMessages({
-        messages: modelMessages,
-        reasoning: 'before-last-message',
-        toolCalls: 'before-last-2-messages',
-        emptyMessages: 'remove'
       })
 
       if (shouldTruncateMessages(modelMessages, model)) {
@@ -175,9 +199,16 @@ export async function createChatStreamResponse(
       perfLog(
         `researchAgent.stream - Start: model=${context.modelId}, searchMode=${searchMode}`
       )
+      // AgentStreamParameters omits onError, but it reaches streamText where only
+      // stream errors, not recoverable tool errors, invoke it.
       const result = await researchAgent.stream({
         messages: modelMessages,
         abortSignal,
+        onError: ({ error }) => {
+          hasStreamError = true
+          streamError = error
+          streamErrorWasCancelled = abortSignal?.aborted ?? false
+        },
         experimental_transform: smoothStream({ chunking: 'word' }),
         ...(isUsageLogging() && {
           onStepFinish: step => {
@@ -188,6 +219,8 @@ export async function createChatStreamResponse(
             )
           }
         })
+      } as Parameters<typeof researchAgent.stream>[0] & {
+        onError: StreamTextOnErrorCallback
       })
       result.consumeStream()
 
@@ -216,6 +249,8 @@ export async function createChatStreamResponse(
             perfTime('researchAgent.stream completed', llmStart)
             if (isAborted || !responseMessage) return
 
+            hasEmptyResponse = isEmptyResponse(responseMessage)
+
             // Persist stream results to database
             await persistStreamResults(
               responseMessage,
@@ -233,13 +268,23 @@ export async function createChatStreamResponse(
           }
         },
         onError: (error: unknown) => {
+          if (isToolFailureError(error)) {
+            console.error('Tool failure:', error)
+            return serializeToolFailure(error)
+          }
+
+          logAPICallErrorDiagnostics(error)
           console.error('Stream response error:', error)
           return serializePublicError(error)
         },
         consumeSseStream: consumeStream
       })
     } catch (error) {
+      hasStreamError = true
+      streamError = error
+      streamErrorWasCancelled = abortSignal?.aborted ?? false
       await endTracing()
+      logAPICallErrorDiagnostics(error)
       console.error('Stream execution error:', error)
       return createPublicErrorResponse(error, {
         status: 500,
