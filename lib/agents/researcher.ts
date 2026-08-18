@@ -1,6 +1,9 @@
-import { stepCountIs, tool, ToolLoopAgent } from 'ai'
+import { isStepCount, tool, ToolLoopAgent } from 'ai'
 
-import type { ResearcherTools } from '@/lib/types/agent'
+import type {
+  ResearcherRuntimeContext,
+  ResearcherTools
+} from '@/lib/types/agent'
 import { type Model } from '@/lib/types/models'
 
 import { fetchTool } from '../tools/fetch'
@@ -70,10 +73,12 @@ function wrapSearchToolForQuickMode<
 export function createResearcher({
   model,
   modelConfig,
+  chatId,
   searchMode = 'adaptive'
 }: {
   model: string
   modelConfig?: Model
+  chatId?: string
   searchMode?: SearchMode
 }) {
   try {
@@ -123,24 +128,38 @@ export function createResearcher({
       ...todoTools
     } as ResearcherTools
 
+    const providerOptions =
+      modelConfig?.providerId === 'openai' && chatId
+        ? {
+            ...modelConfig.providerOptions,
+            openai: {
+              ...modelConfig.providerOptions?.openai,
+              promptCacheKey: chatId
+            }
+          }
+        : modelConfig?.providerOptions
+
     // Create ToolLoopAgent with all configuration
     const agent = new ToolLoopAgent({
       model: getModel(model),
       instructions: `${systemPrompt}\nCurrent date: ${currentDate}`,
       tools,
       activeTools: activeToolsList,
-      stopWhen: stepCountIs(maxSteps),
-      ...(modelConfig?.providerOptions && {
-        providerOptions: modelConfig.providerOptions
-      }),
+      stopWhen: isStepCount(maxSteps),
+      ...(providerOptions && { providerOptions }),
+      runtimeContext: {
+        modelId: model,
+        agentType: 'researcher',
+        searchMode
+      } satisfies ResearcherRuntimeContext,
       // Spans join the parent Langfuse trace via OTel context propagation
-      experimental_telemetry: {
+      telemetry: {
         isEnabled: isTracingEnabled(),
         functionId: 'research-agent',
-        metadata: {
-          modelId: model,
-          agentType: 'researcher',
-          searchMode
+        includeRuntimeContext: {
+          modelId: true,
+          agentType: true,
+          searchMode: true
         }
       }
     })
@@ -154,7 +173,7 @@ export function createResearcher({
 
 // Helper function to access agent tools
 export function getResearcherTools(
-  agent: ToolLoopAgent<never, ResearcherTools, never>
+  agent: ToolLoopAgent<never, ResearcherTools, ResearcherRuntimeContext>
 ): ResearcherTools {
   return agent.tools
 }

@@ -19,6 +19,7 @@ import {
   shouldTruncateMessages,
   truncateMessages
 } from '../utils/context-window'
+import { getTextFromParts } from '../utils/message-utils'
 import { isUsageLogging, logUsage } from '../utils/usage-logging'
 
 import { capHistoricalAttachments } from './helpers/cap-historical-attachments'
@@ -26,12 +27,16 @@ import { compactHistoricalMessages } from './helpers/compact-historical-messages
 import { convertDataPart } from './helpers/convert-data-part'
 import { assignDataPartNonces } from './helpers/data-part-nonce'
 import { dedupeAttachments } from './helpers/dedupe-attachments'
+import { describeTurnInput } from './helpers/describe-turn-input'
 import {
   EMPTY_RESPONSE_STATUS_MESSAGE,
   isEmptyResponse
 } from './helpers/is-empty-response'
 import { logAPICallErrorDiagnostics } from './helpers/log-api-call-error'
-import { buildStreamErrorSpanUpdate } from './helpers/stream-error-diagnostics'
+import {
+  buildStreamErrorSpanUpdate,
+  type StreamErrorPhase
+} from './helpers/stream-error-diagnostics'
 import { stripSpecFromMessages } from './helpers/strip-spec-from-messages'
 import { BaseStreamConfig } from './types'
 
@@ -64,25 +69,43 @@ export async function createEphemeralChatStreamResponse(
     let hasStreamError = false
     let hasEmptyResponse = false
     let streamError: unknown
+    // The agent stream call is preparation until its first generation starts.
+    let streamErrorPhase: StreamErrorPhase = 'preparation'
     // Sampled where the failure happens: the client can disconnect before the
     // span is closed, and by then the signal no longer says whether the user
     // cancelled this turn or the failure was the model's own.
     let streamErrorWasCancelled = false
+    // Overall IO of the trace lives on the root observation. The turn is driven
+    // by the last user message of the submitted history.
+    const rootInput = describeTurnInput(
+      messages.findLast(m => m.role === 'user')?.parts
+    )
+    let rootOutput: string | undefined
 
     const endTracing = async () => {
       if (rootSpan) {
-        if (hasStreamError) {
-          const update = buildStreamErrorSpanUpdate(
-            streamError,
-            streamErrorWasCancelled
-          )
-          if (update) rootSpan.update(update)
-        } else if (hasEmptyResponse) {
-          rootSpan.update({
-            level: 'ERROR',
-            statusMessage: EMPTY_RESPONSE_STATUS_MESSAGE
-          })
+        const failureUpdate = hasStreamError
+          ? buildStreamErrorSpanUpdate(
+              streamError,
+              streamErrorWasCancelled,
+              streamErrorPhase
+            )
+          : hasEmptyResponse
+            ? {
+                level: 'ERROR' as const,
+                statusMessage: EMPTY_RESPONSE_STATUS_MESSAGE
+              }
+            : null
+        // A turn that failed mid-answer or produced no answer text still has
+        // whatever was streamed before it. That is not the turn's answer, so
+        // it is not recorded as one.
+        const hasAnswer = !hasStreamError && !hasEmptyResponse
+        const update = {
+          ...(rootInput !== undefined && { input: rootInput }),
+          ...(hasAnswer && rootOutput !== undefined && { output: rootOutput }),
+          ...failureUpdate
         }
+        if (Object.keys(update).length > 0) rootSpan.update(update)
         rootSpan.end()
         await langfuseSpanProcessor.forceFlush()
       }
@@ -107,6 +130,7 @@ export async function createEphemeralChatStreamResponse(
       const researchAgent = researcher({
         model: `${model.providerId}:${model.id}`,
         modelConfig: model,
+        chatId,
         searchMode
       })
 
@@ -120,10 +144,11 @@ export async function createEphemeralChatStreamResponse(
           hasStreamError = true
           streamError = error
           streamErrorWasCancelled = abortSignal?.aborted ?? false
+          streamErrorPhase = 'generation'
         },
         experimental_transform: smoothStream({ chunking: 'word' }),
         ...(isUsageLogging() && {
-          onStepFinish: step => {
+          onStepEnd: step => {
             logUsage(
               { scope: 'step', modelId },
               step.usage,
@@ -137,7 +162,7 @@ export async function createEphemeralChatStreamResponse(
       result.consumeStream()
 
       if (isUsageLogging()) {
-        Promise.resolve(result.totalUsage)
+        Promise.resolve(result.usage)
           .then(usage => logUsage({ scope: 'total', modelId }, usage))
           .catch(() => {})
       }
@@ -152,8 +177,9 @@ export async function createEphemeralChatStreamResponse(
             }
           }
         },
-        onFinish: async ({ responseMessage, isAborted }) => {
+        onEnd: async ({ responseMessage, isAborted }) => {
           if (!isAborted && responseMessage) {
+            rootOutput = getTextFromParts(responseMessage.parts) || undefined
             hasEmptyResponse = isEmptyResponse(responseMessage)
           }
           await endTracing()
