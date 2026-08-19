@@ -241,6 +241,14 @@ describe('Chat Actions', () => {
       expect(result.chat).toEqual(mockChat)
       expect(result.message).toEqual(mockMessage)
       expect(getCurrentUserId).toHaveBeenCalled()
+      expect(dbActions.upsertMessage).toHaveBeenCalledWith(
+        {
+          ...message,
+          id: 'msg-1',
+          chatId: mockChat.id
+        },
+        userId
+      )
     })
 
     it('should throw error for unauthenticated user', async () => {
@@ -464,7 +472,8 @@ describe('Chat Actions', () => {
       expect(result).toEqual({ success: true, count: 3 })
       expect(dbActions.deleteMessagesAfter).toHaveBeenCalledWith(
         chatId,
-        messageId
+        messageId,
+        userId
       )
       expect(revalidateTag).toHaveBeenCalledWith(`chat-${chatId}`, 'max')
     })
@@ -586,7 +595,8 @@ describe('Chat Actions', () => {
       })
       expect(dbActions.updateChatTitle).toHaveBeenCalledWith(
         chatId,
-        generatedTitle
+        generatedTitle,
+        'user-123'
       )
       expect(revalidateTag).toHaveBeenCalledWith(`chat-${chatId}`, 'max')
     })

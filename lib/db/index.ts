@@ -10,22 +10,14 @@ import * as schema from './schema'
 const isDevelopment = process.env.NODE_ENV === 'development'
 const isTest = process.env.NODE_ENV === 'test'
 
-if (
-  !process.env.DATABASE_URL &&
-  !process.env.DATABASE_RESTRICTED_URL &&
-  !isTest
-) {
-  throw new Error(
-    'DATABASE_URL or DATABASE_RESTRICTED_URL environment variable is not set'
-  )
-}
-
 // Connection with connection pooling for server environments
 // Prefer restricted user for application runtime
 const connectionString =
   process.env.DATABASE_RESTRICTED_URL ?? // Prefer restricted user
   process.env.DATABASE_URL ??
-  (isTest ? 'postgres://user:pass@localhost:5432/testdb' : undefined)
+  (isTest || process.env.NEXT_PHASE === 'phase-production-build'
+    ? 'postgres://user:pass@localhost:5432/testdb'
+    : undefined)
 
 if (!connectionString) {
   throw new Error(
@@ -45,11 +37,22 @@ if (isDevelopment) {
 
 // SSL configuration: Use environment variable to control SSL
 // DATABASE_SSL_DISABLED=true disables SSL completely (for local/Docker PostgreSQL)
-// Default is to enable SSL with certificate verification (for cloud databases like Neon, Supabase)
-const sslConfig =
-  process.env.DATABASE_SSL_DISABLED === 'true'
-    ? false // Disable SSL entirely for local PostgreSQL
-    : { rejectUnauthorized: true } // Enable SSL with verification for cloud DBs
+// Default is to enable SSL for cloud databases (Neon, Supabase, etc.) and disable for local/docker
+const isLocalhost =
+  connectionString.includes('localhost') ||
+  connectionString.includes('127.0.0.1') ||
+  connectionString.includes('postgres:5432')
+
+const sslDisabled =
+  process.env.DATABASE_SSL_DISABLED === 'true' ||
+  connectionString.includes('sslmode=disable') ||
+  (isLocalhost && !connectionString.includes('sslmode=require'))
+
+const sslConfig = sslDisabled
+  ? false // Disable SSL entirely for local PostgreSQL
+  : process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true'
+    ? { rejectUnauthorized: true }
+    : { rejectUnauthorized: false }
 
 const client = postgres(connectionString, {
   ssl: sslConfig,

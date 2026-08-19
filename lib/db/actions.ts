@@ -57,7 +57,7 @@ export async function createChat({
   userId: string
   visibility?: 'public' | 'private'
 }): Promise<Chat> {
-  return withRLS(userId, async tx => {
+  return await withRLS(userId, async tx => {
     const [chat] = await tx
       .insert(chats)
       .values({
@@ -81,7 +81,7 @@ export async function getChat(
 ): Promise<Chat | null> {
   // For public chats or when no userId, use regular db connection
   // For private chats with userId, use RLS
-  return withOptionalRLS(userId || null, async tx => {
+  return await withOptionalRLS(userId || null, async tx => {
     const [chat] = await tx
       .select()
       .from(chats)
@@ -129,7 +129,11 @@ export async function upsertMessage(
       .values(messageData)
       .onConflictDoUpdate({
         target: messages.id,
-        set: { role: messageData.role }
+        set: {
+          role: messageData.role,
+          metadata: messageData.metadata,
+          updatedAt: new Date()
+        }
       })
       .returning()
 
@@ -158,7 +162,7 @@ export async function loadChat(
   chatId: string,
   userId?: string
 ): Promise<UIMessage[]> {
-  return withOptionalRLS(userId || null, async tx => {
+  return await withOptionalRLS(userId || null, async tx => {
     // Use Drizzle's query API with relations
     const result = await tx.query.messages.findMany({
       where: eq(messages.chatId, chatId),
@@ -185,7 +189,7 @@ export async function loadChatWithMessages(
   const count = incrementDbOperationCount()
   perfLog(`DB - loadChatWithMessages called - count: ${count}`)
 
-  return withOptionalRLS(userId || null, async tx => {
+  return await withOptionalRLS(userId || null, async tx => {
     // Get chat and messages in parallel
     const [chatResult, messagesResult] = await Promise.all([
       tx.select().from(chats).where(eq(chats.id, chatId)).limit(1),
@@ -226,7 +230,7 @@ export async function deleteMessagesAfter(
   messageId: string,
   userId?: string
 ): Promise<{ count: number }> {
-  return withOptionalRLS(userId || null, async tx => {
+  return await withOptionalRLS(userId || null, async tx => {
     // Get the message's timestamp
     const [targetMessage] = await tx
       .select({ createdAt: messages.createdAt })
@@ -268,7 +272,7 @@ export async function deleteMessagesFromIndex(
   messageId: string,
   userId?: string
 ): Promise<{ count: number }> {
-  return withOptionalRLS(userId || null, async tx => {
+  return await withOptionalRLS(userId || null, async tx => {
     // Get all messages for the chat
     const allMessages = await tx
       .select({ id: messages.id, createdAt: messages.createdAt })
@@ -299,7 +303,7 @@ export async function deleteMessagesFromIndex(
  * Get all chats for a user
  */
 export async function getChats(userId: string): Promise<Chat[]> {
-  return withRLS(userId, async tx => {
+  return await withRLS(userId, async tx => {
     return tx
       .select()
       .from(chats)
@@ -317,7 +321,7 @@ export async function getChatsPage(
   offset = 0
 ): Promise<{ chats: Chat[]; nextOffset: number | null }> {
   try {
-    return withRLS(userId, async tx => {
+    return await withRLS(userId, async tx => {
       const results = await tx
         .select()
         .from(chats)
@@ -347,7 +351,7 @@ export async function deleteChat(
   userId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    return withRLS(userId, async tx => {
+    return await withRLS(userId, async tx => {
       // Verify ownership
       const [chat] = await tx
         .select()
@@ -378,7 +382,7 @@ export async function deleteUserChats(
   userId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    return withRLS(userId, async tx => {
+    return await withRLS(userId, async tx => {
       await tx.delete(chats).where(eq(chats.userId, userId))
       return { success: true }
     })
@@ -391,7 +395,7 @@ export async function deleteUserChats(
 export async function createNote(
   note: Omit<NewNote, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<Note> {
-  return withRLS(note.userId, async tx => {
+  return await withRLS(note.userId, async tx => {
     const [createdNote] = await tx.insert(notes).values(note).returning()
 
     return createdNote
@@ -417,7 +421,7 @@ export async function getNotes(
   nextCursor: NotesPageCursor | null
   hasMore: boolean
 }> {
-  return withRLS(userId, async tx => {
+  return await withRLS(userId, async tx => {
     const cursorDate = cursor ? new Date(cursor.updatedAt) : null
     const pageLimit = Math.max(1, Math.min(limit, 50))
     const results = await tx
@@ -459,7 +463,7 @@ export async function searchNotes(
   query: string,
   { limit = 20 }: { limit?: number } = {}
 ): Promise<Note[]> {
-  return withRLS(userId, async tx => {
+  return await withRLS(userId, async tx => {
     const trimmed = query.trim()
     const pageLimit = Math.max(1, Math.min(limit, 50))
 
@@ -481,7 +485,7 @@ export async function getNote(
   noteId: string,
   userId: string
 ): Promise<Note | null> {
-  return withRLS(userId, async tx => {
+  return await withRLS(userId, async tx => {
     const [note] = await tx
       .select()
       .from(notes)
@@ -497,7 +501,7 @@ export async function deleteNote(
   userId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    return withRLS(userId, async tx => {
+    return await withRLS(userId, async tx => {
       const [deletedNote] = await tx
         .delete(notes)
         .where(and(eq(notes.id, noteId), eq(notes.userId, userId)))
@@ -519,7 +523,7 @@ export async function deleteUserNotes(
   userId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    return withRLS(userId, async tx => {
+    return await withRLS(userId, async tx => {
       await tx.delete(notes).where(eq(notes.userId, userId))
       return { success: true }
     })
@@ -567,7 +571,7 @@ export async function findChatFileCandidates({
   mediaType: string
   size: number
 }): Promise<LibraryFile[]> {
-  return withRLS(userId, async tx =>
+  return await withRLS(userId, async tx =>
     tx
       .select()
       .from(libraryFiles)
@@ -620,7 +624,7 @@ export async function getAttachmentSizesByObjectKey({
 export async function createLibraryFile(
   file: Omit<NewLibraryFile, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<LibraryFile> {
-  return withRLS(file.userId, async tx => {
+  return await withRLS(file.userId, async tx => {
     let chatId = file.chatId ?? null
 
     if (chatId) {
@@ -661,7 +665,7 @@ export async function getLibraryFiles(
   nextCursor: FilesPageCursor | null
   hasMore: boolean
 }> {
-  return withRLS(userId, async tx => {
+  return await withRLS(userId, async tx => {
     const cursorDate = cursor ? new Date(cursor.updatedAt) : null
     const pageLimit = Math.max(1, Math.min(limit, 50))
     const results = await tx
@@ -706,7 +710,7 @@ export async function searchLibraryFiles(
   query: string,
   { limit = 20 }: { limit?: number } = {}
 ): Promise<LibraryFile[]> {
-  return withRLS(userId, async tx => {
+  return await withRLS(userId, async tx => {
     const trimmed = query.trim()
     const pageLimit = Math.max(1, Math.min(limit, 50))
 
@@ -729,7 +733,7 @@ export async function deleteLibraryFile(
   userId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    return withRLS(userId, async tx => {
+    return await withRLS(userId, async tx => {
       const [deletedFile] = await tx
         .delete(libraryFiles)
         .where(
@@ -753,7 +757,7 @@ export async function deleteUserLibraryFiles(
   userId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    return withRLS(userId, async tx => {
+    return await withRLS(userId, async tx => {
       await tx.delete(libraryFiles).where(eq(libraryFiles.userId, userId))
       return { success: true }
     })
@@ -770,7 +774,7 @@ export async function anonymizeUserFeedback(
   userId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    return withRLS(userId, async tx => {
+    return await withRLS(userId, async tx => {
       await tx
         .update(feedback)
         .set({ userId: null })
@@ -792,7 +796,7 @@ export async function updateChatVisibility(
   userId: string,
   visibility: 'public' | 'private'
 ): Promise<Chat | null> {
-  return withRLS(userId, async tx => {
+  return await withRLS(userId, async tx => {
     const chat = await getChat(chatId, userId)
     if (!chat || chat.userId !== userId) {
       return null
@@ -816,7 +820,7 @@ export async function updateChatTitle(
   title: string,
   userId?: string
 ): Promise<Chat | null> {
-  return withOptionalRLS(userId || null, async tx => {
+  return await withOptionalRLS(userId || null, async tx => {
     const [updatedChat] = await tx
       .update(chats)
       .set({ title })
