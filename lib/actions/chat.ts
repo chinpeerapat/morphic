@@ -129,11 +129,14 @@ export async function createChatAndSaveMessage(
   })
 
   // Save message
-  const dbMessage = await dbActions.upsertMessage({
-    ...message,
-    id: messageId,
-    chatId
-  })
+  const dbMessage = await dbActions.upsertMessage(
+    {
+      ...message,
+      id: messageId,
+      chatId
+    },
+    userId
+  )
 
   // Revalidate cache
   revalidateTag(`chat-${chatId}`, 'max')
@@ -259,7 +262,7 @@ export async function deleteMessagesAfter(chatId: string, messageId: string) {
     return { success: false, error: 'Unauthorized' }
   }
 
-  const result = await dbActions.deleteMessagesAfter(chatId, messageId)
+  const result = await dbActions.deleteMessagesAfter(chatId, messageId, userId)
 
   revalidateTag(`chat-${chatId}`, 'max')
 
@@ -329,15 +332,17 @@ export async function saveChatTitle(
   chat: Chat | null,
   chatId: string,
   message: UIMessage | null,
-  modelId: string
+  modelId: string,
+  userIdOverride?: string
 ) {
   if (!chat && message) {
+    const userId = userIdOverride ?? (await getCurrentUserId())
     const userContent = getTextFromParts(message.parts)
     const title = await generateChatTitle({
       userMessageContent: userContent,
       modelId
     })
-    await dbActions.updateChatTitle(chatId, title)
+    await dbActions.updateChatTitle(chatId, title, userId)
     revalidateTag(`chat-${chatId}`, 'max')
   }
 }
