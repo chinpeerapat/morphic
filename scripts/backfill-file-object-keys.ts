@@ -3,6 +3,8 @@ import postgres from 'postgres'
 
 import 'dotenv/config'
 
+import { getDatabaseSslConfig } from '../lib/db/ssl'
+
 if (!process.env.DATABASE_URL) {
   dotenv.config({ path: '.env.local' })
 }
@@ -85,10 +87,7 @@ async function backfillParts(sql: postgres.Sql) {
 
 async function main() {
   const sql = postgres(process.env.DATABASE_URL!, {
-    ssl:
-      process.env.DATABASE_SSL_DISABLED === 'true'
-        ? false
-        : { rejectUnauthorized: false },
+    ssl: getDatabaseSslConfig(),
     prepare: false
   })
 

@@ -4,6 +4,7 @@ import postgres from 'postgres'
 
 import * as relations from './relations'
 import * as schema from './schema'
+import { getDatabaseSslConfig } from './ssl'
 
 // For server-side usage only
 // Use restricted user for application if available, otherwise fall back to regular user
@@ -43,16 +44,8 @@ if (isDevelopment) {
   )
 }
 
-// SSL configuration: Use environment variable to control SSL
-// DATABASE_SSL_DISABLED=true disables SSL completely (for local/Docker PostgreSQL)
-// Default is to enable SSL with certificate verification (for cloud databases like Neon, Supabase)
-const sslConfig =
-  process.env.DATABASE_SSL_DISABLED === 'true'
-    ? false // Disable SSL entirely for local PostgreSQL
-    : { rejectUnauthorized: true } // Enable SSL with verification for cloud DBs
-
 const client = postgres(connectionString, {
-  ssl: sslConfig,
+  ssl: getDatabaseSslConfig(),
   prepare: false,
   max: 20 // Max 20 connections
 })
