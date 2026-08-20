@@ -9,14 +9,12 @@ export type DatabaseSslConfig = false | { rejectUnauthorized: boolean }
  *   environments that present a self-signed cert in the chain.
  * - `DATABASE_SSL_REJECT_UNAUTHORIZED=true` requires a public CA match.
  */
-export function getDatabaseSslConfig(
-  env: NodeJS.ProcessEnv = process.env
-): DatabaseSslConfig {
-  if (env.DATABASE_SSL_DISABLED === 'true') {
+export function getDatabaseSslConfig(): DatabaseSslConfig {
+  if (process.env.DATABASE_SSL_DISABLED === 'true') {
     return false
   }
 
   return {
-    rejectUnauthorized: env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true'
+    rejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true'
   }
 }
