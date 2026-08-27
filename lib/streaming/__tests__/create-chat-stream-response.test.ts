@@ -214,6 +214,7 @@ describe('createChatStreamResponse', () => {
         statusMessage: describeStreamError(prepareError),
         metadata: {
           streamErrorPhase: 'preparation',
+          streamErrorStage: 'prepare-messages',
           streamErrorShape: { name: 'TypeError' }
         }
       })
@@ -434,7 +435,10 @@ describe('createChatStreamResponse', () => {
 
     expect(mocks.span.update).toHaveBeenCalledWith({
       input: '"earlier.png" (image/png)',
-      output: 'Answer'
+      output: 'Answer',
+      metadata: {
+        carriedContext: { attachments: 1, attachmentTokens: 10_000 }
+      }
     })
   })
 

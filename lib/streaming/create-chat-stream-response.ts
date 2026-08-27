@@ -26,6 +26,7 @@ import { perfLog, perfTime } from '../utils/perf-logging'
 import { isUsageLogging, logUsage } from '../utils/usage-logging'
 
 import { resolveAttachmentSizes } from './helpers/attachment-sizes'
+import { buildAttachmentTokenEstimates } from './helpers/attachment-token-estimates'
 import { capHistoricalAttachments } from './helpers/cap-historical-attachments'
 import { compactHistoricalMessages } from './helpers/compact-historical-messages'
 import { convertDataPart } from './helpers/convert-data-part'
@@ -41,9 +42,11 @@ import { persistStreamResults } from './helpers/persist-stream-results'
 import { prepareMessages } from './helpers/prepare-messages'
 import {
   buildStreamErrorSpanUpdate,
-  type StreamErrorPhase
+  type StreamErrorPhase,
+  type StreamErrorStage
 } from './helpers/stream-error-diagnostics'
 import { stripSpecFromMessages } from './helpers/strip-spec-from-messages'
+import { summarizeCarriedContext } from './helpers/summarize-carried-context'
 import type { StreamContext } from './helpers/types'
 import { BaseStreamConfig } from './types'
 
@@ -103,6 +106,7 @@ export async function createChatStreamResponse(
     let streamError: unknown
     // The agent stream call is preparation until its first generation starts.
     let streamErrorPhase: StreamErrorPhase = 'preparation'
+    let streamErrorStage: StreamErrorStage = 'prepare-messages'
     // Sampled where the failure happens: the client can disconnect before the
     // span is closed, and by then the signal no longer says whether the user
     // cancelled this turn or the failure was the model's own.
@@ -111,15 +115,17 @@ export async function createChatStreamResponse(
     // carries no incoming message, so its input comes from the prepared history.
     let rootInput = describeTurnInput(message?.parts)
     let rootOutput: string | undefined
+    let carriedContext: Record<string, number> | undefined
+    let contextWindowTruncated = false
 
     const endTracing = async () => {
       if (rootSpan) {
         const failureUpdate = hasStreamError
-          ? buildStreamErrorSpanUpdate(
-              streamError,
-              streamErrorWasCancelled,
-              streamErrorPhase
-            )
+          ? buildStreamErrorSpanUpdate(streamError, {
+              requestWasCancelled: streamErrorWasCancelled,
+              phase: streamErrorPhase,
+              stage: streamErrorStage
+            })
           : hasEmptyResponse
             ? {
                 level: 'ERROR' as const,
@@ -130,10 +136,23 @@ export async function createChatStreamResponse(
         // whatever was streamed before it. That is not the turn's answer, so
         // it is not recorded as one.
         const hasAnswer = !hasStreamError && !hasEmptyResponse
+        // A failure update carries its own metadata (#945), so the two are
+        // merged rather than spread as siblings: whichever came last would
+        // otherwise drop the other one entirely.
+        const failureMetadata =
+          failureUpdate && 'metadata' in failureUpdate
+            ? failureUpdate.metadata
+            : undefined
+        const metadata = {
+          ...(carriedContext !== undefined && { carriedContext }),
+          ...(contextWindowTruncated && { contextWindowTruncated }),
+          ...failureMetadata
+        }
         const update = {
           ...(rootInput !== undefined && { input: rootInput }),
           ...(hasAnswer && rootOutput !== undefined && { output: rootOutput }),
-          ...failureUpdate
+          ...failureUpdate,
+          ...(Object.keys(metadata).length > 0 && { metadata })
         }
         if (Object.keys(update).length > 0) rootSpan.update(update)
         rootSpan.end()
@@ -173,6 +192,7 @@ export async function createChatStreamResponse(
       }
 
       // Get the researcher agent with search mode
+      streamErrorStage = 'build-agent'
       const researchAgent = researcher({
         model: context.modelId,
         modelConfig: model,
@@ -180,6 +200,7 @@ export async function createChatStreamResponse(
         searchMode
       })
 
+      streamErrorStage = 'transform-messages'
       const messagesWithNonces = assignDataPartNonces(messagesToModel)
       const messagesWithoutSpec = stripSpecFromMessages(messagesWithNonces)
       const messagesWithAttachmentSizes = await resolveAttachmentSizes(
@@ -191,16 +212,29 @@ export async function createChatStreamResponse(
           compactHistoricalMessages(messagesWithAttachmentSizes)
         )
       )
+      carriedContext = summarizeCarriedContext(messagesToConvert)
+      const attachmentTokenEstimates =
+        buildAttachmentTokenEstimates(messagesToConvert)
 
       // Convert to model messages and apply context window management
+      streamErrorStage = 'convert-messages'
       let modelMessages = await convertToModelMessages(messagesToConvert, {
         convertDataPart
       })
 
-      if (shouldTruncateMessages(modelMessages, model)) {
+      streamErrorStage = 'truncate-messages'
+      if (
+        shouldTruncateMessages(modelMessages, model, attachmentTokenEstimates)
+      ) {
         const maxTokens = getMaxAllowedTokens(model)
         const originalCount = modelMessages.length
-        modelMessages = truncateMessages(modelMessages, maxTokens, model.id)
+        modelMessages = truncateMessages(
+          modelMessages,
+          maxTokens,
+          model.id,
+          attachmentTokenEstimates
+        )
+        contextWindowTruncated = true
 
         if (process.env.NODE_ENV === 'development') {
           console.log(
@@ -210,6 +244,7 @@ export async function createChatStreamResponse(
       }
 
       // Start title generation in parallel if it's a new chat
+      streamErrorStage = 'start-title-generation'
       if (!initialChat && message) {
         const userContent = getTextFromParts(message.parts)
         titlePromise = generateChatTitle({
@@ -226,6 +261,7 @@ export async function createChatStreamResponse(
       perfLog(
         `researchAgent.stream - Start: model=${context.modelId}, searchMode=${searchMode}`
       )
+      streamErrorStage = 'start-stream'
       // AgentStreamParameters omits onError, but it reaches streamText where only
       // stream errors, not recoverable tool errors, invoke it.
       const result = await researchAgent.stream({

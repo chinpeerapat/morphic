@@ -3,6 +3,13 @@ import type { UIMessage } from 'ai'
 import type { SearchResultItem } from '@/lib/types'
 import { extractCitationMaps, processCitations } from '@/lib/utils/citation'
 
+import {
+  capAnswerTextParts,
+  hasReplayableAnswerText,
+  HISTORY_ANSWER_TEXT_LIMIT
+} from './cap-historical-answer-text'
+import { sliceWithoutSplittingSurrogatePair } from './slice-without-splitting-surrogate-pair'
+
 // Applies per assistant turn. Source context is attached to every cited turn
 // and never removed later, so this bound is what keeps a long conversation's
 // accumulated evidence from crowding out the context window.
@@ -23,20 +30,6 @@ function normalizeInlineText(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/\s+/g, ' ')
     .trim()
-}
-
-function sliceWithoutSplittingSurrogatePair(
-  value: string,
-  maxChars: number
-): string {
-  if (value.length <= maxChars) return value
-
-  const sliced = value.slice(0, maxChars)
-  const lastCodeUnit = sliced.charCodeAt(sliced.length - 1)
-
-  return lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff
-    ? sliced.slice(0, -1)
-    : sliced
 }
 
 function truncateInlineText(value: string, maxChars: number): string {
@@ -214,19 +207,32 @@ Entries correspond to cited sources in order. Their URLs remain in the preceding
  * context. The current request's ToolLoopAgent messages do not pass through
  * this function, so its active reasoning/tool sequence remains intact.
  *
- * A message's output depends only on that message. Selecting by position in
- * the conversation instead would rewrite already-sent history as turns are
- * appended, which both changes what the model saw earlier and invalidates the
- * provider's prompt cache from that point on.
+ * Each historical message's replayed output depends only on that message.
+ * Appending turns can only append to the replayed prompt, preserving its
+ * stable prefix.
  */
-export function compactHistoricalMessages(messages: UIMessage[]): UIMessage[] {
-  return messages.flatMap(message => {
+export function compactHistoricalMessages(
+  messages: UIMessage[],
+  answerTextCap: { maxChars?: number } = {}
+): UIMessage[] {
+  const maxChars = answerTextCap.maxChars ?? HISTORY_ANSWER_TEXT_LIMIT
+  const currentTurnIndex = messages.findLastIndex(
+    message => message.role === 'user'
+  )
+  const historyEnd =
+    currentTurnIndex === -1 ? messages.length : currentTurnIndex
+
+  return messages.flatMap((message, index) => {
     if (message.role !== 'assistant') {
       return [message]
     }
 
+    if (!hasReplayableAnswerText(message)) {
+      return []
+    }
+
     const citationMaps = extractCitationMaps(message)
-    const textParts = message.parts.flatMap(part => {
+    let textParts = message.parts.flatMap(part => {
       if (part.type !== 'text' || !part.text.trim()) {
         return []
       }
@@ -241,8 +247,8 @@ export function compactHistoricalMessages(messages: UIMessage[]): UIMessage[] {
       ]
     })
 
-    if (textParts.length === 0) {
-      return []
+    if (maxChars > 0 && index < historyEnd) {
+      textParts = capAnswerTextParts(textParts, maxChars)
     }
 
     const sourceContext = createSourceContext(

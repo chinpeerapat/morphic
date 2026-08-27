@@ -22,6 +22,7 @@ import {
 import { getTextFromParts } from '../utils/message-utils'
 import { isUsageLogging, logUsage } from '../utils/usage-logging'
 
+import { buildAttachmentTokenEstimates } from './helpers/attachment-token-estimates'
 import { capHistoricalAttachments } from './helpers/cap-historical-attachments'
 import { compactHistoricalMessages } from './helpers/compact-historical-messages'
 import { convertDataPart } from './helpers/convert-data-part'
@@ -35,9 +36,11 @@ import {
 import { logAPICallErrorDiagnostics } from './helpers/log-api-call-error'
 import {
   buildStreamErrorSpanUpdate,
-  type StreamErrorPhase
+  type StreamErrorPhase,
+  type StreamErrorStage
 } from './helpers/stream-error-diagnostics'
 import { stripSpecFromMessages } from './helpers/strip-spec-from-messages'
+import { summarizeCarriedContext } from './helpers/summarize-carried-context'
 import { BaseStreamConfig } from './types'
 
 import { langfuseSpanProcessor } from '@/instrumentation'
@@ -71,6 +74,7 @@ export async function createEphemeralChatStreamResponse(
     let streamError: unknown
     // The agent stream call is preparation until its first generation starts.
     let streamErrorPhase: StreamErrorPhase = 'preparation'
+    let streamErrorStage: StreamErrorStage = 'transform-messages'
     // Sampled where the failure happens: the client can disconnect before the
     // span is closed, and by then the signal no longer says whether the user
     // cancelled this turn or the failure was the model's own.
@@ -81,15 +85,17 @@ export async function createEphemeralChatStreamResponse(
       messages.findLast(m => m.role === 'user')?.parts
     )
     let rootOutput: string | undefined
+    let carriedContext: Record<string, number> | undefined
+    let contextWindowTruncated = false
 
     const endTracing = async () => {
       if (rootSpan) {
         const failureUpdate = hasStreamError
-          ? buildStreamErrorSpanUpdate(
-              streamError,
-              streamErrorWasCancelled,
-              streamErrorPhase
-            )
+          ? buildStreamErrorSpanUpdate(streamError, {
+              requestWasCancelled: streamErrorWasCancelled,
+              phase: streamErrorPhase,
+              stage: streamErrorStage
+            })
           : hasEmptyResponse
             ? {
                 level: 'ERROR' as const,
@@ -100,10 +106,23 @@ export async function createEphemeralChatStreamResponse(
         // whatever was streamed before it. That is not the turn's answer, so
         // it is not recorded as one.
         const hasAnswer = !hasStreamError && !hasEmptyResponse
+        // A failure update carries its own metadata (#945), so the two are
+        // merged rather than spread as siblings: whichever came last would
+        // otherwise drop the other one entirely.
+        const failureMetadata =
+          failureUpdate && 'metadata' in failureUpdate
+            ? failureUpdate.metadata
+            : undefined
+        const metadata = {
+          ...(carriedContext !== undefined && { carriedContext }),
+          ...(contextWindowTruncated && { contextWindowTruncated }),
+          ...failureMetadata
+        }
         const update = {
           ...(rootInput !== undefined && { input: rootInput }),
           ...(hasAnswer && rootOutput !== undefined && { output: rootOutput }),
-          ...failureUpdate
+          ...failureUpdate,
+          ...(Object.keys(metadata).length > 0 && { metadata })
         }
         if (Object.keys(update).length > 0) rootSpan.update(update)
         rootSpan.end()
@@ -117,16 +136,30 @@ export async function createEphemeralChatStreamResponse(
       const messagesToConvert = dedupeAttachments(
         capHistoricalAttachments(compactHistoricalMessages(messagesWithoutSpec))
       )
+      carriedContext = summarizeCarriedContext(messagesToConvert)
+      const attachmentTokenEstimates =
+        buildAttachmentTokenEstimates(messagesToConvert)
 
+      streamErrorStage = 'convert-messages'
       let modelMessages = await convertToModelMessages(messagesToConvert, {
         convertDataPart
       })
 
-      if (shouldTruncateMessages(modelMessages, model)) {
+      streamErrorStage = 'truncate-messages'
+      if (
+        shouldTruncateMessages(modelMessages, model, attachmentTokenEstimates)
+      ) {
         const maxTokens = getMaxAllowedTokens(model)
-        modelMessages = truncateMessages(modelMessages, maxTokens, model.id)
+        modelMessages = truncateMessages(
+          modelMessages,
+          maxTokens,
+          model.id,
+          attachmentTokenEstimates
+        )
+        contextWindowTruncated = true
       }
 
+      streamErrorStage = 'build-agent'
       const researchAgent = researcher({
         model: `${model.providerId}:${model.id}`,
         modelConfig: model,
@@ -135,6 +168,7 @@ export async function createEphemeralChatStreamResponse(
       })
 
       const modelId = `${model.providerId}:${model.id}`
+      streamErrorStage = 'start-stream'
       // AgentStreamParameters omits onError, but it reaches streamText where only
       // stream errors, not recoverable tool errors, invoke it.
       const result = await researchAgent.stream({
