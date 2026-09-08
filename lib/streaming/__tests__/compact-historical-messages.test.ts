@@ -215,6 +215,50 @@ describe('compactHistoricalMessages', () => {
     expect(sourceContext.text).not.toContain('x'.repeat(401))
   })
 
+  it('keeps a source cited after a malformed-close citation', () => {
+    const messages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-search',
+            toolCallId: 'call_1',
+            state: 'output-available',
+            input: { query: 'example' },
+            output: {
+              query: 'example',
+              images: [],
+              results: [
+                {
+                  title: 'First source',
+                  url: 'https://example.com/first',
+                  content: 'First evidence'
+                },
+                {
+                  title: 'Later source',
+                  url: 'https://example.com/later',
+                  content: 'Later evidence'
+                }
+              ]
+            }
+          },
+          {
+            type: 'text',
+            text: 'First [1](#call_1] middle survives. Later [2](#call_1)'
+          }
+        ]
+      }
+    ] as unknown as UIMessage[]
+
+    const [, sourceContext] = compactHistoricalMessages(messages)[0]
+      .parts as Array<{ type: 'text'; text: string }>
+
+    expect(sourceContext.text).toContain('First source')
+    expect(sourceContext.text).toContain('Later source')
+    expect(sourceContext.text).toContain('https://example.com/later')
+  })
+
   it('uses description from persisted Brave results when content is absent', () => {
     const messages = [
       {
@@ -277,6 +321,49 @@ describe('compactHistoricalMessages', () => {
     const afterFiveTurns = compactHistoricalMessages(turns)
 
     expect(afterFiveTurns.slice(0, 2)).toEqual(afterTwoTurns)
+  })
+
+  it('keeps labelled source context independent of earlier messages', () => {
+    const labelledTurn = {
+      id: 'assistant-labelled',
+      role: 'assistant' as const,
+      parts: [
+        {
+          type: 'tool-search',
+          toolCallId: 'opaque-call',
+          state: 'output-available',
+          input: { query: 'labelled' },
+          output: {
+            query: 'labelled',
+            images: [],
+            results: [
+              {
+                label: 'S7',
+                title: 'Labelled source',
+                url: 'https://labelled.example/source',
+                content: 'Persisted labelled evidence'
+              }
+            ]
+          }
+        },
+        { type: 'text', text: 'Labelled answer. [2](#S7)' }
+      ]
+    } as unknown as UIMessage
+    const earlierTurns = [1, 2, 3].map(
+      createCitedAssistantMessage
+    ) as unknown as UIMessage[]
+
+    const byItself = compactHistoricalMessages([labelledTurn])[0]
+    const afterEarlierTurns = compactHistoricalMessages([
+      ...earlierTurns,
+      labelledTurn
+    ]).at(-1)
+    const answer = byItself.parts[0] as { type: 'text'; text: string }
+    const sourceContext = byItself.parts[1] as { type: 'text'; text: string }
+
+    expect(afterEarlierTurns).toEqual(byItself)
+    expect(answer.text).toContain('https://labelled.example/source')
+    expect(sourceContext.text).toContain('Persisted labelled evidence')
   })
 
   it('keeps all unique cited sources within the source context budget', () => {

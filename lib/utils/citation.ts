@@ -18,6 +18,20 @@ export function isCitationLabel(label: string): boolean {
   return /^[\w-]+(?:\.[\w-]+)*$/.test(label)
 }
 
+const DERIVED_LABEL_PATTERN = /^S\d+$/
+
+export function createCitationPattern(): RegExp {
+  // A global RegExp carries lastIndex state, so each consumer needs a fresh one.
+  // The id excludes brackets, parens and whitespace so a citation the model
+  // closed with the wrong delimiter cannot reach into the text after it and
+  // swallow an adjacent citation.
+  return /\[\s*(\d+)\s*\]\(#([^\s()[\]]+)[)\]]/g
+}
+
+export function isDerivedLabel(label: string): boolean {
+  return DERIVED_LABEL_PATTERN.test(label)
+}
+
 /**
  * Strip a known provider/router prefix from a toolCallId.
  * Some models prepend their own prefix (e.g. `toolu_`) to the search tool's
@@ -26,6 +40,57 @@ export function isCitationLabel(label: string): boolean {
  */
 function stripToolCallPrefix(toolCallId: string): string {
   return toolCallId.replace(/^(toolu_|call_|search-)/, '')
+}
+
+/**
+ * Stamp a contiguous block of citation labels onto search results.
+ * Fixtures that stand in for a real search go through this too: the prompt
+ * tells the model to cite a result's label, so an unlabelled fixture would
+ * leave it with no citation target and stop mirroring production.
+ */
+export function assignCitationLabels<T extends SearchResultItem>(
+  results: T[],
+  startNumber: number
+): T[] {
+  return results.map((result, index) => ({
+    ...result,
+    label: `S${startNumber + index}`
+  }))
+}
+
+/**
+ * The label number a turn should start from, so labels stay unique across the
+ * conversation rather than restarting every turn.
+ * This is a snapshot, not an allocation: two requests that start from the same
+ * history get the same seed. `extractCitationMapsFromMessages` contains that
+ * case by refusing to resolve a label two turns both claim.
+ */
+export function nextCitationLabelNumber(messages: UIMessage[]): number {
+  let maxLabelNumber = 0
+
+  for (const message of messages) {
+    for (const part of message.parts ?? []) {
+      if (
+        part.type !== 'tool-search' ||
+        part.state !== 'output-available' ||
+        !part.output
+      ) {
+        continue
+      }
+
+      const searchResults = part.output as SearchResults
+      for (const result of searchResults.results ?? []) {
+        if (result.label && isDerivedLabel(result.label)) {
+          maxLabelNumber = Math.max(
+            maxLabelNumber,
+            Number(result.label.slice(1))
+          )
+        }
+      }
+    }
+  }
+
+  return maxLabelNumber + 1
 }
 
 /**
@@ -64,10 +129,43 @@ export function extractCitationMaps(
         // Store citation map with toolCallId as key
         citationMaps[part.toolCallId] = citationMap
       }
+
+      for (const result of searchResults.results ?? []) {
+        if (
+          result.label &&
+          isDerivedLabel(result.label) &&
+          !citationMaps[result.label]
+        ) {
+          citationMaps[result.label] = { 1: result }
+        }
+      }
     }
   })
 
   return citationMaps
+}
+
+export function resolveCitation(
+  citationMaps: Record<string, Record<number, SearchResultItem>>,
+  id: string,
+  citationNumber: number
+): SearchResultItem | undefined {
+  let citationMap = citationMaps[id]
+  if (!citationMap) {
+    const normalizedId = stripToolCallPrefix(id)
+    citationMap =
+      citationMaps[normalizedId] ??
+      citationMaps[
+        Object.keys(citationMaps).find(
+          key => stripToolCallPrefix(key) === normalizedId
+        ) ?? ''
+      ]
+  }
+
+  return (
+    citationMap?.[citationNumber] ??
+    (citationMap && isDerivedLabel(id) ? citationMap[1] : undefined)
+  )
 }
 
 /**
@@ -81,11 +179,34 @@ export function extractCitationMapsFromMessages(
     string,
     Record<number, SearchResultItem>
   > = {}
+  const labelOwners = new Map<string, string>()
+  const ambiguousLabels = new Set<string>()
 
-  messages.forEach(message => {
+  messages.forEach((message, index) => {
     const messageCitationMaps = extractCitationMaps(message)
-    // Merge citation maps from this message
-    Object.assign(combinedCitationMaps, messageCitationMaps)
+    const owner = message.id ?? `index-${index}`
+
+    for (const [key, citationMap] of Object.entries(messageCitationMaps)) {
+      if (isDerivedLabel(key)) {
+        // Labels are seeded from the persisted history, so two turns share one
+        // only when they were prepared from the same snapshot (concurrent
+        // requests on one chat). Merging would let the later turn's source
+        // answer the earlier turn's citation, which is worse than not
+        // resolving, so an ambiguous label resolves to nothing at all.
+        if (ambiguousLabels.has(key)) continue
+
+        const previousOwner = labelOwners.get(key)
+        if (previousOwner === undefined) {
+          labelOwners.set(key, owner)
+        } else if (previousOwner !== owner) {
+          ambiguousLabels.add(key)
+          delete combinedCitationMaps[key]
+          continue
+        }
+      }
+
+      combinedCitationMaps[key] = citationMap
+    }
   })
 
   return combinedCitationMaps
@@ -105,44 +226,23 @@ export function processCitations(
 
   // Replace [number](#toolCallId) with [domain](actual-url)
   // Also handle cases with spaces: [ number ]
-  return content.replace(
-    /\[\s*(\d+)\s*\]\(#([^)]+)\)/g,
-    (_match, num, toolCallId) => {
-      const citationNum = parseInt(num, 10)
+  return content.replace(createCitationPattern(), (_match, num, toolCallId) => {
+    const citationNum = parseInt(num, 10)
 
-      // Validate citation number bounds
-      if (isNaN(citationNum) || citationNum < 1 || citationNum > 100) {
-        return '' // Return empty string for invalid citation numbers
-      }
-
-      // Get the citation map for this toolCallId. Prefer an exact match to
-      // avoid side effects, then fall back to prefix-normalized matching so
-      // ids the model prepended a prefix to (e.g. `toolu_<id>`) still resolve.
-      let citationMap = citationMaps[toolCallId]
-      if (!citationMap) {
-        const normalizedId = stripToolCallPrefix(toolCallId)
-        citationMap =
-          citationMaps[normalizedId] ??
-          citationMaps[
-            Object.keys(citationMaps).find(
-              key => stripToolCallPrefix(key) === normalizedId
-            ) ?? ''
-          ]
-      }
-      if (!citationMap) {
-        return '' // Return empty string if no citation map found
-      }
-
-      const citation = citationMap[citationNum]
-      if (!citation || !isValidUrl(citation.url)) {
-        return '' // Return empty string for invalid citations
-      }
-
-      // Extract domain name from URL (removes TLD and subdomain)
-      const domainName = displayUrlName(citation.url)
-
-      // Encode URI to prevent injection attacks
-      return `[${domainName}](${encodeURI(citation.url)})`
+    // Validate citation number bounds
+    if (isNaN(citationNum) || citationNum < 1 || citationNum > 100) {
+      return '' // Return empty string for invalid citation numbers
     }
-  )
+
+    const citation = resolveCitation(citationMaps, toolCallId, citationNum)
+    if (!citation || !isValidUrl(citation.url)) {
+      return '' // Return empty string for invalid citations
+    }
+
+    // Extract domain name from URL (removes TLD and subdomain)
+    const domainName = displayUrlName(citation.url)
+
+    // Encode URI to prevent injection attacks
+    return `[${domainName}](${encodeURI(citation.url)})`
+  })
 }

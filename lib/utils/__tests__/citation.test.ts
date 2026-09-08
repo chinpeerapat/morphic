@@ -5,9 +5,48 @@ import type { UIMessage } from '@/lib/types/ai'
 
 import {
   extractCitationMaps,
+  extractCitationMapsFromMessages,
   isCitationLabel,
+  isDerivedLabel,
+  nextCitationLabelNumber,
   processCitations
 } from '../citation'
+
+function labelledAssistantMessage({
+  id,
+  toolCallId,
+  labels,
+  urls
+}: {
+  id: string
+  toolCallId: string
+  labels: string[]
+  urls: string[]
+}): UIMessage {
+  return {
+    id,
+    role: 'assistant',
+    parts: [
+      {
+        type: 'tool-search',
+        state: 'output-available',
+        toolCallId,
+        input: { query: id },
+        output: {
+          query: id,
+          images: [],
+          results: labels.map((label, index) => ({
+            label,
+            title: `${id} source ${index + 1}`,
+            url: urls[index],
+            content: `${id} evidence ${index + 1}`
+          }))
+        }
+      },
+      { type: 'text', text: labels.map(label => `[1](#${label})`).join(' ') }
+    ]
+  } as unknown as UIMessage
+}
 
 describe('processCitations', () => {
   const mockCitationMaps = {
@@ -30,12 +69,67 @@ describe('processCitations', () => {
     } as Record<number, SearchResultItem>
   }
 
+  const labelledCitationMaps = {
+    S37: {
+      1: {
+        title: 'Malformed close source',
+        url: 'https://example.com/malformed',
+        content: 'Malformed close evidence'
+      }
+    } as Record<number, SearchResultItem>,
+    S5: {
+      1: {
+        title: 'Later source',
+        url: 'https://example.com/later',
+        content: 'Later evidence'
+      }
+    } as Record<number, SearchResultItem>
+  }
+
   it('converts numbered citations to domain names', () => {
     const content = 'Check out [1](#toolCall1) and [2](#toolCall1)'
     const result = processCitations(content, mockCitationMaps)
 
     expect(result).toBe(
       'Check out [google](https://www.google.com) and [github](https://docs.github.com)'
+    )
+  })
+
+  it('does not consume text or a later citation after a malformed close', () => {
+    const content =
+      'Alpha is true. [1](#S37] Beta is a whole sentence that should survive. Gamma cites correctly. [1](#S5)'
+
+    expect(processCitations(content, labelledCitationMaps)).toBe(
+      'Alpha is true. [example](https://example.com/malformed) Beta is a whole sentence that should survive. Gamma cites correctly. [example](https://example.com/later)'
+    )
+  })
+
+  it('does not let a malformed close swallow the next citation opener', () => {
+    const content = 'Alpha. [1](#missing[1](#S5) tail.'
+
+    expect(processCitations(content, labelledCitationMaps)).toBe(
+      'Alpha. [1](#missing[example](https://example.com/later) tail.'
+    )
+  })
+
+  it('resolves a malformed close to the same source as a normal close', () => {
+    expect(processCitations('[1](#S37]', labelledCitationMaps)).toBe(
+      processCitations('[1](#S37)', labelledCitationMaps)
+    )
+  })
+
+  it('keeps well-formed citation resolution unchanged', () => {
+    expect(processCitations('[1](#toolCall1)', mockCitationMaps)).toBe(
+      '[google](https://www.google.com)'
+    )
+  })
+
+  it('drops an unresolvable id without consuming neighbouring text', () => {
+    const content =
+      'Before [1](#missing] middle survives. After [1](#toolCall1)'
+
+    expect(processCitations(content, mockCitationMaps)).toBe(
+      'Before  middle survives. After [google](https://www.google.com)'
     )
   })
 
@@ -135,6 +229,18 @@ describe('processCitations', () => {
       'See [google](https://www.google.com) and [github](https://docs.github.com)'
     )
   })
+
+  it.each(['toolu_', 'call_', 'search-'])(
+    'normalizes the %s prefix for legacy citations',
+    prefix => {
+      const result = processCitations(
+        `[1](#${prefix}toolCall1)`,
+        mockCitationMaps
+      )
+
+      expect(result).toBe('[google](https://www.google.com)')
+    }
+  )
 
   it('still prefers an exact toolCallId match over a normalized one', () => {
     const content = 'See [1](#toolCall1)'
@@ -261,6 +367,163 @@ describe('processCitations', () => {
       const result = processCitations('See [1](#toolCall1)', maps)
 
       expect(result).toBe('See [google](https://www.google.com)')
+    })
+
+    it('adds one-result maps for valid persisted labels', () => {
+      const labelledResults = [
+        { ...results[0], label: 'S3' },
+        { ...results[1], label: 'invalid' }
+      ]
+      const maps = extractCitationMaps(
+        messageWithSearchPart({ results: labelledResults })
+      )
+
+      expect(maps.S3).toEqual({ 1: labelledResults[0] })
+      expect(maps).not.toHaveProperty('invalid')
+      expect(maps.toolCall1[2]).toEqual(labelledResults[1])
+    })
+  })
+
+  describe('derived citation labels', () => {
+    it('resolves each labelled turn through the combined conversation map', () => {
+      const turnOne = labelledAssistantMessage({
+        id: 'turn-one',
+        toolCallId: 'call_one',
+        labels: ['S1', 'S2'],
+        urls: ['https://turn-one.test/1', 'https://turn-one.test/2']
+      })
+      const turnTwo = labelledAssistantMessage({
+        id: 'turn-two',
+        toolCallId: 'call_two',
+        labels: ['S3', 'S4'],
+        urls: ['https://turn-two.test/1', 'https://turn-two.test/2']
+      })
+      const maps = extractCitationMapsFromMessages([turnOne, turnTwo])
+
+      expect(processCitations('[1](#S1) [1](#S2)', maps)).toBe(
+        '[turn-one](https://turn-one.test/1) [turn-one](https://turn-one.test/2)'
+      )
+      expect(processCitations('[1](#S3) [1](#S4)', maps)).toBe(
+        '[turn-two](https://turn-two.test/1) [turn-two](https://turn-two.test/2)'
+      )
+      expect(processCitations('[2](#S1)', maps)).toBe(
+        '[turn-one](https://turn-one.test/1)'
+      )
+    })
+
+    it('keeps the first turn addressable when the next seed follows history', () => {
+      const turnOne = labelledAssistantMessage({
+        id: 'turn-one',
+        toolCallId: 'call_one',
+        labels: ['S1', 'S2'],
+        urls: ['https://first.test/source', 'https://first.test/other']
+      })
+      const secondSeed = nextCitationLabelNumber([turnOne])
+      const turnTwo = labelledAssistantMessage({
+        id: 'turn-two',
+        toolCallId: 'call_two',
+        labels: [`S${secondSeed}`],
+        urls: ['https://second.test/source']
+      })
+      const maps = extractCitationMapsFromMessages([turnOne, turnTwo])
+
+      expect(secondSeed).toBe(3)
+      expect(processCitations('[1](#S1)', maps)).toBe(
+        '[first](https://first.test/source)'
+      )
+    })
+
+    it('starts at one without labels and advances past the largest valid label', () => {
+      expect(nextCitationLabelNumber([])).toBe(1)
+
+      const legacyMessage = labelledAssistantMessage({
+        id: 'legacy-shaped',
+        toolCallId: 'call_legacy',
+        labels: ['not-a-derived-label'],
+        urls: ['https://example.test/legacy']
+      })
+      expect(nextCitationLabelNumber([legacyMessage])).toBe(1)
+
+      const message = labelledAssistantMessage({
+        id: 'history',
+        toolCallId: 'call_history',
+        labels: ['S2', 'bad', 'S12', 'S3x'],
+        urls: [
+          'https://example.test/2',
+          'https://example.test/bad',
+          'https://example.test/12',
+          'https://example.test/3x'
+        ]
+      })
+
+      expect(nextCitationLabelNumber([message])).toBe(13)
+    })
+
+    it('refuses to resolve a label two turns both claim', () => {
+      const first = labelledAssistantMessage({
+        id: 'concurrent-one',
+        toolCallId: 'call_one',
+        labels: ['S1', 'S2'],
+        urls: ['https://one.test/a', 'https://one.test/b']
+      })
+      const second = labelledAssistantMessage({
+        id: 'concurrent-two',
+        toolCallId: 'call_two',
+        labels: ['S2'],
+        urls: ['https://two.test/a']
+      })
+      const maps = extractCitationMapsFromMessages([first, second])
+
+      expect(maps).not.toHaveProperty('S2')
+      expect(processCitations('[1](#S2)', maps)).toBe('')
+      // The unambiguous label in the same conversation still resolves.
+      expect(processCitations('[1](#S1)', maps)).toBe(
+        '[one](https://one.test/a)'
+      )
+    })
+
+    it('resolves legacy and labelled turns together', () => {
+      const legacy = {
+        id: 'legacy',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-search',
+            state: 'output-available',
+            toolCallId: 'call_legacy',
+            input: { query: 'legacy' },
+            output: {
+              results: [
+                {
+                  title: 'Legacy',
+                  url: 'https://legacy.test/source',
+                  content: 'Legacy evidence'
+                }
+              ]
+            }
+          },
+          { type: 'text', text: '[1](#toolu_legacy)' }
+        ]
+      } as unknown as UIMessage
+      const labelled = labelledAssistantMessage({
+        id: 'labelled',
+        toolCallId: 'search-new',
+        labels: ['S1'],
+        urls: ['https://labelled.test/source']
+      })
+      const maps = extractCitationMapsFromMessages([legacy, labelled])
+
+      expect(processCitations('[1](#toolu_legacy) [1](#S1)', maps)).toBe(
+        '[legacy](https://legacy.test/source) [labelled](https://labelled.test/source)'
+      )
+    })
+
+    it('recognizes only derived source labels', () => {
+      expect(isDerivedLabel('S1')).toBe(true)
+      expect(isDerivedLabel('S12')).toBe(true)
+      expect(isDerivedLabel('s1')).toBe(false)
+      expect(isDerivedLabel('S')).toBe(false)
+      expect(isDerivedLabel('S1x')).toBe(false)
     })
   })
 
