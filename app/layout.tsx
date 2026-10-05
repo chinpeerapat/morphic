@@ -7,6 +7,12 @@ import { getCurrentUserId } from '@/lib/auth/get-current-user'
 import { UserProvider } from '@/lib/contexts/user-context'
 import { hasSupabasePublicConfig } from '@/lib/supabase/keys'
 import { createClient } from '@/lib/supabase/server'
+import {
+  ENFORCEMENT,
+  getUsageBudget,
+  isUsageBudgetAvailable,
+  UI_ENABLED
+} from '@/lib/usage-budget'
 import { cn } from '@/lib/utils'
 
 import { SidebarProvider } from '@/components/ui/sidebar'
@@ -19,6 +25,7 @@ import { KeyboardShortcutHandler } from '@/components/keyboard-shortcut-handler'
 import { LibraryProvider } from '@/components/library/library-context'
 import { PostHogProvider } from '@/components/posthog-provider'
 import { ThemeProvider } from '@/components/theme-provider'
+import { UsageBudgetProvider } from '@/components/usage-budget-provider'
 
 import './globals.css'
 
@@ -70,6 +77,32 @@ export default async function RootLayout({
   }
 
   const userId = user?.id ?? (await getCurrentUserId())
+  const isCloudDeployment = process.env.MORPHIC_CLOUD_DEPLOYMENT === 'true'
+  const usageBudgetEnabled = Boolean(
+    user &&
+      isCloudDeployment &&
+      isUsageBudgetAvailable() &&
+      ENFORCEMENT === 'on' &&
+      UI_ENABLED
+  )
+  const usageSnapshot =
+    usageBudgetEnabled && user
+      ? await getUsageBudget({
+          userId: user.id,
+          userCreatedAt: user.created_at
+        })
+      : null
+  const initialUsage = usageSnapshot
+    ? {
+        remaining: usageSnapshot.remaining,
+        limit: usageSnapshot.limit,
+        costs: usageSnapshot.costs,
+        resetAt: new Date(usageSnapshot.resetAt).toISOString(),
+        ...(usageSnapshot.refreshAt && {
+          refreshAt: new Date(usageSnapshot.refreshAt).toISOString()
+        })
+      }
+    : null
 
   return (
     <html lang="en" suppressHydrationWarning>
@@ -89,20 +122,26 @@ export default async function RootLayout({
             <UserProvider hasUser={!!userId}>
               <SidebarProvider defaultOpen={false}>
                 <LibraryProvider>
-                  {userId && <AppSidebar />}
-                  <KeyboardShortcutHandler />
-                  <div className="flex flex-col flex-1 min-w-0">
-                    <Header user={user} />
-                    <main className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
-                      <ArtifactRoot>{children}</ArtifactRoot>
-                    </main>
-                  </div>
+                  <UsageBudgetProvider
+                    key={user?.id ?? 'guest'}
+                    initialUsage={initialUsage}
+                    enabled={usageBudgetEnabled}
+                  >
+                    {userId && <AppSidebar />}
+                    <KeyboardShortcutHandler />
+                    <div className="flex flex-col flex-1 min-w-0">
+                      <Header user={user} />
+                      <main className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
+                        <ArtifactRoot>{children}</ArtifactRoot>
+                      </main>
+                    </div>
+                  </UsageBudgetProvider>
                 </LibraryProvider>
               </SidebarProvider>
             </UserProvider>
           </PostHogProvider>
           <Toaster />
-          <Analytics />
+          {isCloudDeployment && <Analytics />}
         </ThemeProvider>
       </body>
     </html>

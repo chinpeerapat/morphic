@@ -10,7 +10,8 @@ describe('TavilySearchProvider domains', () => {
 
   const searchAndReadBody = async (
     includeDomains: string[] = [],
-    excludeDomains: string[] = []
+    excludeDomains: string[] = [],
+    query: string = 'query'
   ) => {
     vi.stubEnv('TAVILY_API_KEY', 'test-key')
     const fetchMock = vi.fn(
@@ -20,7 +21,7 @@ describe('TavilySearchProvider domains', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await new TavilySearchProvider().search(
-      'query',
+      query,
       5,
       'basic',
       includeDomains,
@@ -69,5 +70,146 @@ describe('TavilySearchProvider domains', () => {
 
     expect(body.include_domains).toEqual(['example.com', '*.example.org'])
     expect(body.exclude_domains).toEqual(['example.net'])
+  })
+
+  it('converts a site-only query into a domain term and include_domains entry', async () => {
+    const body = await searchAndReadBody([], [], 'site:example.com')
+
+    expect(body.query).toBe('example.com')
+    expect(body.include_domains).toEqual(['example.com'])
+  })
+
+  it('converts multiple site-only operators into domain terms', async () => {
+    const body = await searchAndReadBody(
+      ['existing.net'],
+      [],
+      'site:example.com SITE:example.org'
+    )
+
+    expect(body.query).toBe('example.com example.org')
+    expect(body.include_domains).toEqual([
+      'existing.net',
+      'example.com',
+      'example.org'
+    ])
+  })
+
+  it('leaves a site operator combined with search terms unchanged', async () => {
+    const query = 'site:example.com remodeling services'
+    const body = await searchAndReadBody([], [], query)
+
+    expect(body.query).toBe(query)
+    expect(body.include_domains).toEqual([])
+  })
+
+  it('leaves a query without site operators unchanged', async () => {
+    const query = 'remodeling services'
+    const body = await searchAndReadBody([], [], query)
+
+    expect(body.query).toBe(query)
+    expect(body.include_domains).toEqual([])
+  })
+
+  it('leaves a site-only query whose domains are all invalid unchanged', async () => {
+    const body = await searchAndReadBody([], [], 'site:edu')
+
+    expect(body.query).toBe('site:edu')
+    expect(body.include_domains).toEqual([])
+  })
+
+  it('punycodes an internationalized site-only operand', async () => {
+    const body = await searchAndReadBody([], [], 'site:münchen.de')
+
+    expect(body.query).toBe('xn--mnchen-3ya.de')
+    expect(body.include_domains).toEqual(['xn--mnchen-3ya.de'])
+  })
+
+  it('leaves a site operand carrying a port unchanged', async () => {
+    const query = 'site:example.com:8080'
+    const body = await searchAndReadBody([], [], query)
+
+    expect(body.query).toBe(query)
+    expect(body.include_domains).toEqual([])
+  })
+
+  it('converts a site-only path into a path term and domain entry', async () => {
+    const body = await searchAndReadBody([], [], 'site:example.com/docs')
+
+    expect(body.query).toBe('docs ')
+    expect(body.include_domains).toEqual(['example.com'])
+  })
+
+  it('converts a deep site-only path into terms without its extension', async () => {
+    const body = await searchAndReadBody(
+      [],
+      [],
+      'site:example.com/a/b/teoria_comercio.pdf'
+    )
+
+    expect(body.query).toBe('a b teoria comercio')
+    expect(body.include_domains).toEqual(['example.com'])
+  })
+
+  it('keeps a dot-prefixed path component and a version slug', async () => {
+    const wellKnown = await searchAndReadBody(
+      [],
+      [],
+      'site:example.com/.well-known'
+    )
+
+    expect(wellKnown.query).toBe('well known')
+    expect(wellKnown.include_domains).toEqual(['example.com'])
+
+    const versioned = await searchAndReadBody(
+      [],
+      [],
+      'site:example.com/docs/v1.2'
+    )
+
+    expect(versioned.query).toBe('docs v1 2')
+    expect(versioned.include_domains).toEqual(['example.com'])
+  })
+
+  it('drops an extension carrying digits', async () => {
+    const video = await searchAndReadBody(
+      [],
+      [],
+      'site:example.com/media/interview.mp4'
+    )
+
+    expect(video.query).toBe('media interview')
+    expect(video.include_domains).toEqual(['example.com'])
+
+    const archive = await searchAndReadBody(
+      [],
+      [],
+      'site:example.com/archive.7z'
+    )
+
+    expect(archive.query).toBe('archive')
+    expect(archive.include_domains).toEqual(['example.com'])
+  })
+
+  it('leaves a site-only path with an invalid host unchanged', async () => {
+    const query = 'site:edu/docs'
+    const body = await searchAndReadBody([], [], query)
+
+    expect(body.query).toBe(query)
+    expect(body.include_domains).toEqual([])
+  })
+
+  it('leaves a site path combined with search terms unchanged', async () => {
+    const query = 'site:example.com/docs remodeling services'
+    const body = await searchAndReadBody([], [], query)
+
+    expect(body.query).toBe(query)
+    expect(body.include_domains).toEqual([])
+  })
+
+  it('keeps only the valid domains of a mixed site-only query', async () => {
+    const body = await searchAndReadBody([], [], 'site:example.com site:edu')
+
+    expect(body.query).toBe('example.com')
+    expect(body.include_domains).toEqual(['example.com'])
   })
 })

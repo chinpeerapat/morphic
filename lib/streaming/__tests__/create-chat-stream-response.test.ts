@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
     end: vi.fn()
   },
   forceFlush: vi.fn(),
-  finishPromise: Promise.resolve()
+  finishPromise: Promise.resolve(),
+  trimColdStartHistory: vi.fn()
 }))
 
 vi.mock('ai', () => ({
@@ -50,6 +51,11 @@ vi.mock('@/lib/streaming/helpers/attachment-sizes', () => ({
   resolveAttachmentSizes: vi.fn(async (messages: unknown) => messages)
 }))
 
+vi.mock('@/lib/streaming/helpers/trim-cold-start-history', () => ({
+  COLD_START_HISTORY_TOKEN_LIMIT: 200_000,
+  trimColdStartHistory: mocks.trimColdStartHistory
+}))
+
 vi.mock('@/lib/streaming/helpers/persist-stream-results', () => ({
   persistStreamResults: vi.fn(async () => undefined)
 }))
@@ -70,10 +76,12 @@ vi.mock('@/lib/utils/usage-logging', () => ({
 import { loadChat, loadChatUncached } from '@/lib/actions/chat'
 import { researcher } from '@/lib/agents/researcher'
 import { DeterministicPreparationError } from '@/lib/errors/deterministic-preparation-error'
+import { serializeToolFailure, ToolFailureError } from '@/lib/errors/tool-error'
 import { createChatStreamResponse } from '@/lib/streaming/create-chat-stream-response'
 import { describeStreamError } from '@/lib/streaming/helpers/describe-stream-error'
 import { EMPTY_RESPONSE_STATUS_MESSAGE } from '@/lib/streaming/helpers/is-empty-response'
 import { prepareMessages } from '@/lib/streaming/helpers/prepare-messages'
+import { getMaxAllowedTokens } from '@/lib/utils/context-window'
 
 type StreamOptions = {
   onError: (event: { error: unknown }) => void
@@ -84,22 +92,30 @@ type UIMessageStreamResponseOptions = {
     responseMessage: {
       id: string
       role: 'assistant'
-      parts: Array<{ type: string; text?: string }>
+      parts: Array<{ type: string; text?: string; state?: string }>
     }
     isAborted: boolean
   }) => Promise<void>
+  onError: (error: unknown) => string
 }
 
 function createFakeResult(
   isAborted = false,
-  parts: Array<{ type: string; text?: string }> = [
+  parts: Array<{ type: string; text?: string; state?: string }> = [
     { type: 'text', text: 'Answer' }
-  ]
+  ],
+  // Raised into the response handler before the turn ends, the way a tool
+  // failure reaches it while the stream keeps going.
+  responseError?: { error: unknown; onSerialized?: (payload: string) => void }
 ) {
   return {
     consumeStream: vi.fn(),
     toUIMessageStreamResponse: vi.fn(
       (options: UIMessageStreamResponseOptions) => {
+        if (responseError) {
+          const serialized = options.onError(responseError.error)
+          if (responseError.onSerialized) responseError.onSerialized(serialized)
+        }
         mocks.finishPromise = options.onEnd({
           responseMessage: {
             id: 'response-id',
@@ -150,6 +166,10 @@ describe('createChatStreamResponse', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.finishPromise = Promise.resolve()
+    mocks.trimColdStartHistory.mockImplementation((messages: unknown[]) => ({
+      messages,
+      trimmedAtCurrentTurn: false
+    }))
     vi.spyOn(console, 'error').mockImplementation(() => {})
   })
 
@@ -341,6 +361,38 @@ describe('createChatStreamResponse', () => {
     })
   })
 
+  it('records a cold-start history trim on the root span', async () => {
+    mocks.trimColdStartHistory.mockImplementationOnce(
+      (messages: unknown[]) => ({
+        messages,
+        trimmedAtCurrentTurn: true
+      })
+    )
+    mocks.stream.mockResolvedValue(createFakeResult())
+
+    await createChatStreamResponse(createConfig())
+    await mocks.finishPromise
+
+    expect(mocks.span.update).toHaveBeenCalledWith({
+      input: 'hello',
+      output: 'Answer',
+      metadata: { coldStartHistoryTrimmed: true }
+    })
+  })
+
+  it('bounds the cold-start history limit by the model input window', async () => {
+    const config = createConfig()
+    mocks.stream.mockResolvedValue(createFakeResult())
+
+    await createChatStreamResponse(config)
+    await mocks.finishPromise
+
+    expect(mocks.trimColdStartHistory).toHaveBeenCalledWith(expect.any(Array), {
+      limit: Math.min(200_000, getMaxAllowedTokens(config.model)),
+      modelId: 'gpt-4o-mini'
+    })
+  })
+
   it('omits the output when the answer is only whitespace', async () => {
     mocks.stream.mockResolvedValue(
       createFakeResult(false, [{ type: 'text', text: '   \n' }])
@@ -513,7 +565,7 @@ describe('createChatStreamResponse', () => {
       input: '"earlier.png" (image/png)',
       output: 'Answer',
       metadata: {
-        carriedContext: { attachments: 1, attachmentTokens: 10_000 }
+        carriedContext: { attachments: 1, attachmentTokens: 4_000 }
       }
     })
   })
@@ -538,5 +590,95 @@ describe('createChatStreamResponse', () => {
       level: 'ERROR',
       statusMessage: EMPTY_RESPONSE_STATUS_MESSAGE
     })
+  })
+
+  it('refunds a non-aborted stream that finishes without an answer', async () => {
+    const onZeroPartError = vi.fn(async () => undefined)
+    mocks.stream.mockResolvedValue(createFakeResult(false, []))
+
+    await createChatStreamResponse({
+      ...createConfig(),
+      onZeroPartError
+    })
+    await mocks.finishPromise
+
+    expect(onZeroPartError).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the turn successful when a tool fails and the answer still lands', async () => {
+    const onZeroPartError = vi.fn(async () => undefined)
+    const toolFailure = new ToolFailureError(
+      'fetch',
+      new Error('HTTP 403: Forbidden')
+    )
+    let serialized: string | undefined
+    mocks.stream.mockResolvedValue(
+      createFakeResult(
+        false,
+        [
+          { type: 'tool-fetch', state: 'output-error' },
+          { type: 'text', text: 'Answer' }
+        ],
+        {
+          error: toolFailure,
+          onSerialized: payload => {
+            serialized = payload
+          }
+        }
+      )
+    )
+
+    await createChatStreamResponse({ ...createConfig(), onZeroPartError })
+    await mocks.finishPromise
+
+    expect(serialized).toBe(serializeToolFailure(toolFailure))
+    expect(mocks.span.update).toHaveBeenCalledWith({
+      input: 'hello',
+      output: 'Answer'
+    })
+    expect(onZeroPartError).not.toHaveBeenCalled()
+  })
+
+  it('marks the turn as failed when a tool fails and nothing is answered', async () => {
+    const onZeroPartError = vi.fn(async () => undefined)
+    const toolFailure = new ToolFailureError(
+      'search',
+      new Error('Tavily search failed: HTTP 400: Bad Request')
+    )
+    mocks.stream.mockResolvedValue(
+      createFakeResult(false, [], { error: toolFailure })
+    )
+
+    await createChatStreamResponse({ ...createConfig(), onZeroPartError })
+    await mocks.finishPromise
+
+    const update = mocks.span.update.mock.calls.at(-1)?.[0]
+    expect(update).toMatchObject({ input: 'hello', level: 'ERROR' })
+    expect(update).not.toHaveProperty('output')
+    expect(onZeroPartError).toHaveBeenCalledOnce()
+  })
+
+  it('marks the turn as failed when a tool failure leaves only a preamble', async () => {
+    const toolFailure = new ToolFailureError(
+      'fetch',
+      new Error('HTTP 403: Forbidden')
+    )
+    mocks.stream.mockResolvedValue(
+      createFakeResult(
+        false,
+        [
+          { type: 'text', text: 'Let me look that up.' },
+          { type: 'tool-fetch', state: 'output-error' }
+        ],
+        { error: toolFailure }
+      )
+    )
+
+    await createChatStreamResponse(createConfig())
+    await mocks.finishPromise
+
+    const update = mocks.span.update.mock.calls.at(-1)?.[0]
+    expect(update).toMatchObject({ input: 'hello', level: 'ERROR' })
+    expect(update).not.toHaveProperty('output')
   })
 })

@@ -34,6 +34,8 @@ import { convertDataPart } from './helpers/convert-data-part'
 import { assignDataPartNonces } from './helpers/data-part-nonce'
 import { dedupeAttachments } from './helpers/dedupe-attachments'
 import { describeTurnInput } from './helpers/describe-turn-input'
+import { hasAnswerAfterToolFailure } from './helpers/has-answer-after-tool-failure'
+import { hasResponseContentPart } from './helpers/has-response-content'
 import {
   EMPTY_RESPONSE_STATUS_MESSAGE,
   isEmptyResponse
@@ -48,6 +50,10 @@ import {
 } from './helpers/stream-error-diagnostics'
 import { stripSpecFromMessages } from './helpers/strip-spec-from-messages'
 import { summarizeCarriedContext } from './helpers/summarize-carried-context'
+import {
+  COLD_START_HISTORY_TOKEN_LIMIT,
+  trimColdStartHistory
+} from './helpers/trim-cold-start-history'
 import type { StreamContext } from './helpers/types'
 import { BaseStreamConfig } from './types'
 
@@ -68,7 +74,8 @@ export async function createChatStreamResponse(
     messageId,
     abortSignal,
     isNewChat,
-    searchMode
+    searchMode,
+    onZeroPartError
   } = config
 
   // Verify that chatId is provided
@@ -113,6 +120,10 @@ export async function createChatStreamResponse(
     // be attached to this trace later
     const parentTraceId = rootSpan?.traceId
     let hasStreamError = false
+    // A failing tool is the page or the search service failing, not the turn:
+    // the agent keeps going and the answer still lands. Tracked apart from the
+    // stream's own failures so it can only become one when nothing was answered.
+    let hasToolFailure = false
     let hasEmptyResponse = false
     let streamError: unknown
     // The agent stream call is preparation until its first generation starts.
@@ -128,6 +139,7 @@ export async function createChatStreamResponse(
     let rootOutput: string | undefined
     let carriedContext: Record<string, number> | undefined
     let contextWindowTruncated = false
+    let coldStartHistoryTrimmed = false
 
     const endTracing = async () => {
       if (rootSpan) {
@@ -157,6 +169,7 @@ export async function createChatStreamResponse(
         const metadata = {
           ...(carriedContext !== undefined && { carriedContext }),
           ...(contextWindowTruncated && { contextWindowTruncated }),
+          ...(coldStartHistoryTrimmed && { coldStartHistoryTrimmed }),
           ...failureMetadata
         }
         const update = {
@@ -219,9 +232,23 @@ export async function createChatStreamResponse(
         messagesWithoutSpec,
         userId
       )
+      const coldStartHistory = trimColdStartHistory(
+        messagesWithAttachmentSizes,
+        {
+          limit:
+            COLD_START_HISTORY_TOKEN_LIMIT > 0
+              ? Math.min(
+                  COLD_START_HISTORY_TOKEN_LIMIT,
+                  getMaxAllowedTokens(model)
+                )
+              : 0,
+          modelId: model.id
+        }
+      )
+      coldStartHistoryTrimmed = coldStartHistory.trimmedAtCurrentTurn
       const messagesToConvert = dedupeAttachments(
         capHistoricalAttachments(
-          compactHistoricalMessages(messagesWithAttachmentSizes)
+          compactHistoricalMessages(coldStartHistory.messages)
         )
       )
       carriedContext = summarizeCarriedContext(messagesToConvert)
@@ -274,13 +301,18 @@ export async function createChatStreamResponse(
         `researchAgent.stream - Start: model=${context.modelId}, searchMode=${searchMode}`
       )
       streamErrorStage = 'start-stream'
-      // AgentStreamParameters omits onError, but it reaches streamText where only
-      // stream errors, not recoverable tool errors, invoke it.
+      // AgentStreamParameters omits onError, but it reaches streamText. A tool
+      // failure is classified here too rather than assumed away: the same error
+      // is recoverable whichever handler it arrives at.
       const result = await researchAgent.stream({
         messages: modelMessages,
         abortSignal,
         onError: ({ error }) => {
-          hasStreamError = true
+          if (isToolFailureError(error)) {
+            hasToolFailure = true
+          } else {
+            hasStreamError = true
+          }
           streamError = error
           streamErrorWasCancelled = abortSignal?.aborted ?? false
           streamErrorPhase = 'generation'
@@ -323,10 +355,30 @@ export async function createChatStreamResponse(
         onEnd: async ({ responseMessage, isAborted }) => {
           try {
             perfTime('researchAgent.stream completed', llmStart)
-            if (isAborted || !responseMessage) return
+            if (isAborted) return
+            if (!responseMessage) {
+              if (hasStreamError || hasToolFailure) {
+                hasStreamError = true
+                await onZeroPartError?.()
+              }
+              return
+            }
 
             rootOutput = getTextFromParts(responseMessage.parts) || undefined
             hasEmptyResponse = isEmptyResponse(responseMessage)
+            // The tool failure is only the turn's failure once the turn has no
+            // answer to show for it, and an answer counts only when it came
+            // after the failure: text the model wrote on its way to the tool is
+            // a preamble.
+            if (hasToolFailure && !hasAnswerAfterToolFailure(responseMessage)) {
+              hasStreamError = true
+            }
+            if (
+              hasEmptyResponse ||
+              (hasStreamError && !hasResponseContentPart(responseMessage))
+            ) {
+              await onZeroPartError?.()
+            }
 
             // Persist stream results to database
             await persistStreamResults(
@@ -345,11 +397,17 @@ export async function createChatStreamResponse(
           }
         },
         onError: (error: unknown) => {
+          streamError = error
+          streamErrorWasCancelled = abortSignal?.aborted ?? false
+          streamErrorPhase = 'generation'
+
           if (isToolFailureError(error)) {
+            hasToolFailure = true
             console.error('Tool failure:', error)
             return serializeToolFailure(error)
           }
 
+          hasStreamError = true
           logAPICallErrorDiagnostics(error)
           console.error('Stream response error:', error)
           return serializePublicError(error)

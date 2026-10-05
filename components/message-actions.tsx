@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 
 import { saveNote } from '@/lib/actions/notes'
 import { captureClient } from '@/lib/analytics/posthog-client'
+import { stripSourceContextBlocks } from '@/lib/render/strip-source-context-blocks'
 import { stripSpecBlocks } from '@/lib/render/strip-spec-blocks'
 import type { SearchResultItem } from '@/lib/types'
 import type { UIDataTypes, UIMessage, UITools } from '@/lib/types/ai'
@@ -30,6 +31,12 @@ import {
   DialogHeader,
   DialogTitle
 } from './ui/dialog'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from './ui/tooltip'
 import { ChatShare } from './chat-share'
 import { RetryButton } from './retry-button'
 
@@ -87,14 +94,16 @@ export function MessageActions({
   }
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(stripSpecBlocks(mappedMessage))
+    await navigator.clipboard.writeText(
+      stripSpecBlocks(stripSourceContextBlocks(mappedMessage))
+    )
     toast.success('Message copied to clipboard')
   }
 
   async function handleSaveNote() {
     if (isSavingNote) return
 
-    const content = stripSpecBlocks(mappedMessage)
+    const content = stripSpecBlocks(stripSourceContextBlocks(mappedMessage))
     captureClient('note_save_clicked', {
       source: 'button',
       chatId,
@@ -216,7 +225,7 @@ export function MessageActions({
       <div
         aria-hidden={!visible}
         className={cn(
-          'flex w-full items-center justify-between gap-3 self-stretch transition-opacity duration-200',
+          'flex w-full items-center gap-3 self-stretch transition-opacity duration-200',
           visible ? 'opacity-100' : 'pointer-events-none opacity-0 invisible',
           className
         )}
@@ -266,22 +275,28 @@ export function MessageActions({
               )}
             </>
           )}
+          {showSaveButton && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleSaveNote}
+                    disabled={isSavingNote}
+                    className="rounded-full"
+                    aria-label="Save to library"
+                  >
+                    <Bookmark size={14} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="text-xs">
+                  Save to library
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
-        {showSaveButton ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleSaveNote}
-            disabled={isSavingNote}
-            className="h-8 shrink-0 gap-1.5 rounded-full px-3"
-            aria-label="Save to library"
-          >
-            <Bookmark size={14} />
-            Save
-          </Button>
-        ) : (
-          <div />
-        )}
       </div>
 
       <Dialog open={authPromptOpen} onOpenChange={setAuthPromptOpen}>

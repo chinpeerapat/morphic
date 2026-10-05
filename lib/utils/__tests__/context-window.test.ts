@@ -1,15 +1,29 @@
 import { ModelMessage } from 'ai'
+import { getEncoding } from 'js-tiktoken'
 import { describe, expect, test } from 'vitest'
 
 import { Model } from '@/lib/types/models'
 
 import {
+  countTextTokens,
   getMaxAllowedTokens,
   shouldTruncateMessages,
   truncateMessages
 } from '../context-window'
 
 describe('context-window', () => {
+  describe('countTextTokens', () => {
+    test('counts gpt-6-luna text with the o200k tokenizer', () => {
+      const text = 'مرحبا بك في هذا البحث عن الطاقة المتجددة. '.repeat(50)
+      const tokens = countTextTokens(text, 'gpt-6-luna')
+
+      expect(tokens).toBe(getEncoding('o200k_base').encode(text).length)
+      expect(tokens).toBeLessThan(
+        getEncoding('cl100k_base').encode(text).length
+      )
+    })
+  })
+
   const mockModel: Model = {
     id: 'gpt-4o-mini',
     name: 'GPT-4o mini',
@@ -32,6 +46,11 @@ describe('context-window', () => {
       expect(maxTokens).toBe(98816)
     })
 
+    test('uses the snapshot context window for GPT-4.1', () => {
+      const maxTokens = getMaxAllowedTokens({ ...mockModel, id: 'gpt-4.1' })
+      expect(maxTokens).toBe(910051)
+    })
+
     test('uses default values for unknown model', () => {
       const unknownModel: Model = {
         ...mockModel,
@@ -52,18 +71,86 @@ describe('context-window', () => {
     test('uses the real ~1M window for production Gemini models', () => {
       // (1048576 - 65536) - floor(1048576 * 0.1) = 983040 - 104857 = 878183
       for (const id of ['gemini-3-flash-preview', 'gemini-3.1-flash-lite']) {
-        const maxTokens = getMaxAllowedTokens({ ...mockModel, id })
+        const maxTokens = getMaxAllowedTokens({
+          ...mockModel,
+          id,
+          providerId: 'google'
+        })
         expect(maxTokens).toBe(878183)
       }
     })
 
-    test('uses the real 1.05M window for GPT-5.6 Luna', () => {
+    test('uses the real 1.05M window for GPT-6 Luna', () => {
       // (1050000 - 128000) - floor(1050000 * 0.1) = 817000
       const maxTokens = getMaxAllowedTokens({
         ...mockModel,
-        id: 'gpt-5.6-luna'
+        id: 'gpt-6-luna'
       })
       expect(maxTokens).toBe(817000)
+    })
+
+    test('resolves a model absent from the old hand-maintained table', () => {
+      const maxTokens = getMaxAllowedTokens({
+        ...mockModel,
+        id: 'claude-sonnet-4-6',
+        providerId: 'anthropic'
+      })
+      expect(maxTokens).toBe(772000)
+    })
+
+    test('reserves output tokens when input metadata exceeds the remainder', () => {
+      // min(272000, 400000 - 200000) - floor(400000 * 0.1) = 200000 - 40000
+      const maxTokens = getMaxAllowedTokens({
+        ...mockModel,
+        id: 'gpt-5-pro'
+      })
+      expect(maxTokens).toBe(160000)
+    })
+
+    test('caps the output reservation for models whose output equals context', () => {
+      // (256000 - 128000) - floor(256000 * 0.1) = 128000 - 25600
+      const maxTokens = getMaxAllowedTokens({
+        ...mockModel,
+        id: 'mistral/mistral-large-3',
+        providerId: 'gateway'
+      })
+      expect(maxTokens).toBe(102400)
+    })
+
+    test('falls back to Vercel metadata for a direct provider miss', () => {
+      const maxTokens = getMaxAllowedTokens({
+        ...mockModel,
+        id: 'claude-sonnet-4',
+        providerId: 'anthropic'
+      })
+      expect(maxTokens).toBe(891808)
+    })
+
+    test('does not resolve object prototype keys as models', () => {
+      const maxTokens = getMaxAllowedTokens({
+        ...mockModel,
+        id: 'constructor',
+        providerId: 'openai'
+      })
+      expect(maxTokens).toBe(10650)
+    })
+
+    test('resolves gateway model ids from Vercel metadata', () => {
+      const maxTokens = getMaxAllowedTokens({
+        ...mockModel,
+        id: 'openai/gpt-5.6-luna',
+        providerId: 'gateway'
+      })
+      expect(maxTokens).toBe(817000)
+    })
+
+    test('searches the snapshot for providers without a direct mapping', () => {
+      const maxTokens = getMaxAllowedTokens({
+        ...mockModel,
+        id: 'gpt-4.1',
+        providerId: 'openai-compatible'
+      })
+      expect(maxTokens).toBe(910051)
     })
   })
 
@@ -195,6 +282,18 @@ describe('context-window', () => {
       const result = truncateMessages(messages, 100) // Very low limit
       expect(result.length).toBeGreaterThan(0)
       expect(result[0]).toEqual(messages[0]) // First user message preserved
+    })
+
+    test('never drops the latest user message to fit an earlier one', () => {
+      const messages: ModelMessage[] = [
+        createMessage('user', 'Question 1'),
+        createMessage('assistant', 'Long response '.repeat(50)),
+        createMessage('user', 'Source context '.repeat(50)),
+        createMessage('user', 'Latest question')
+      ]
+
+      const result = truncateMessages(messages, 50)
+      expect(result[result.length - 1].content).toBe('Latest question')
     })
 
     test('removes assistant messages to keep user messages', () => {

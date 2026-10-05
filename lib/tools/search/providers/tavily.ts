@@ -1,4 +1,4 @@
-import { SearchResults } from '@/lib/types'
+import { SearchResultItem, SearchResults } from '@/lib/types'
 import { sanitizeUrl } from '@/lib/utils'
 
 import { BaseSearchProvider } from './base'
@@ -11,6 +11,32 @@ const CLOUD_EXCLUDED_DOMAINS = ['instagram.com']
 // valid suffix, so bare labels are dropped before the call. Entries are first
 // resolved to an ASCII hostname so internationalized domains survive.
 const VALID_DOMAIN_PATTERN = /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/
+
+// Tavily rejects a query made only of `site:` operators. Path terms are kept
+// in the query since include_domains can only express their hostnames.
+const SITE_OPERATOR_PATTERN = /^site:[^\s/:?#@\\]+(?:\/\S*)?$/i
+
+const extractSiteOnlyOperands = (
+  query: string
+): Array<{ host: string; path: string }> | null => {
+  const tokens = query.trim().split(/\s+/)
+
+  if (tokens.some(token => !SITE_OPERATOR_PATTERN.test(token))) {
+    return null
+  }
+
+  return tokens.map(token => {
+    const operand = token.slice(5)
+    const pathStart = operand.indexOf('/')
+
+    return pathStart === -1
+      ? { host: operand, path: '' }
+      : {
+          host: operand.slice(0, pathStart),
+          path: operand.slice(pathStart + 1)
+        }
+  })
+}
 
 const toAsciiHostname = (domain: string): string => {
   try {
@@ -30,6 +56,16 @@ const normalizeDomains = (domains: string[]) =>
     )
   })
 
+// A trailing extension is dropped, but only when a suffix carrying at least one
+// letter follows a nonempty stem, so `/.well-known` and purely numeric version
+// slugs like `/v1.2` survive.
+const pathToSearchTerms = (path: string): string =>
+  path
+    .replace(/([^/.])\.(?=[a-z0-9]{0,7}[a-z])[a-z0-9]{1,8}$/i, '$1')
+    .replace(/(?:%20|[/_.+-])+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
 export class TavilySearchProvider extends BaseSearchProvider {
   async search(
     query: string,
@@ -41,11 +77,30 @@ export class TavilySearchProvider extends BaseSearchProvider {
     const apiKey = process.env.TAVILY_API_KEY
     this.validateApiKey(apiKey, 'TAVILY')
 
+    const siteOnlyOperands = extractSiteOnlyOperands(query)
+    const validSiteOperands = siteOnlyOperands
+      ? siteOnlyOperands.flatMap(({ host, path }) => {
+          const [domain] = normalizeDomains([host])
+          return domain ? [{ domain, path }] : []
+        })
+      : []
+    const validSiteDomains = validSiteOperands.map(({ domain }) => domain)
+    const effectiveQuery = validSiteOperands.length
+      ? validSiteOperands
+          .map(({ domain, path }) => pathToSearchTerms(path) || domain)
+          .join(' ')
+      : query
+
     // Tavily API requires a minimum of 5 characters in the query
     const filledQuery =
-      query.length < 5 ? query + ' '.repeat(5 - query.length) : query
+      effectiveQuery.length < 5
+        ? effectiveQuery + ' '.repeat(5 - effectiveQuery.length)
+        : effectiveQuery
 
-    const validIncludeDomains = normalizeDomains(includeDomains)
+    const validIncludeDomains = [
+      ...normalizeDomains(includeDomains),
+      ...validSiteDomains
+    ]
 
     const isCloudDeployment = process.env.MORPHIC_CLOUD_DEPLOYMENT === 'true'
     const effectiveExcludeDomains = isCloudDeployment
@@ -121,9 +176,23 @@ export class TavilySearchProvider extends BaseSearchProvider {
           )
       : data.images.map((url: string) => sanitizeUrl(url))
 
+    const results: SearchResultItem[] = (
+      (data.results ?? []) as Array<{
+        title?: string
+        url?: string
+        content?: string
+      }>
+    ).map(result => ({
+      title: result.title ?? '',
+      url: result.url ?? '',
+      content: result.content ?? ''
+    }))
+
     return {
-      ...data,
-      images: processedImages
+      results,
+      images: processedImages,
+      query: data.query ?? filledQuery,
+      number_of_results: results.length
     }
   }
 }
