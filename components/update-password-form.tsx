@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-import { createClient } from '@/lib/supabase/client'
+import { updatePassword } from '@/lib/actions/auth'
 import { cn } from '@/lib/utils/index'
 
 import { Button } from '@/components/ui/button'
@@ -19,8 +19,9 @@ import { Label } from '@/components/ui/label'
 
 export function UpdatePasswordForm({
   className,
+  token,
   ...props
-}: React.ComponentPropsWithoutRef<'div'>) {
+}: React.ComponentPropsWithoutRef<'div'> & { token?: string }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -28,15 +29,16 @@ export function UpdatePasswordForm({
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault()
-    const supabase = createClient()
     setIsLoading(true)
     setError(null)
 
     try {
-      const { error } = await supabase.auth.updateUser({ password })
-      if (error) throw error
+      const result = await updatePassword(password, token)
+      if (!result.success) throw new Error(result.error ?? 'An error occurred')
       // Redirect to root and refresh to ensure server components get updated session.
-      router.push('/')
+      // A token reset (better-auth) establishes no session: the provider
+      // redirects to the sign-in page instead.
+      router.push(result.redirectTo ?? '/')
       router.refresh()
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : 'An error occurred')

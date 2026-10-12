@@ -1,9 +1,42 @@
 import { type NextRequest, NextResponse } from 'next/server'
 
-import { hasSupabasePublicConfig } from '@/lib/supabase/keys'
-import { updateSession } from '@/lib/supabase/middleware'
+import {
+  exceedsRelayBodyCap,
+  RELAY_PREFIX,
+  relayRequestHeaders,
+  relayTarget
+} from '@/lib/analytics/relay-target'
+import { getAuthProvider, resolveAuthProviderName } from '@/lib/auth/provider'
+
+// Better Auth sends /relay through the route handler. Other providers
+// proxy straight to PostHog so analytics requests cost no function
+// invocation and keep upstream caching.
+function relayRewrite(request: NextRequest): NextResponse | null {
+  const { pathname, search } = request.nextUrl
+  if (pathname !== RELAY_PREFIX && !pathname.startsWith(`${RELAY_PREFIX}/`)) {
+    return null
+  }
+  if (resolveAuthProviderName() === 'better-auth') {
+    return null
+  }
+  const target = relayTarget(pathname.slice(RELAY_PREFIX.length) || '/', search)
+  if (!target) {
+    return new NextResponse('Not found', { status: 404 })
+  }
+  if (exceedsRelayBodyCap(request.headers)) {
+    return new NextResponse('Payload too large', { status: 413 })
+  }
+  return NextResponse.rewrite(target, {
+    request: { headers: relayRequestHeaders(request.headers) }
+  })
+}
 
 export async function proxy(request: NextRequest) {
+  const relay = relayRewrite(request)
+  if (relay) {
+    return relay
+  }
+
   // Get the protocol from X-Forwarded-Proto header or request protocol
   const protocol =
     request.headers.get('x-forwarded-proto') || request.nextUrl.protocol
@@ -15,17 +48,11 @@ export async function proxy(request: NextRequest) {
   // Construct the base URL - ensure protocol has :// format
   const baseUrl = `${protocol}${protocol.endsWith(':') ? '//' : '://'}${host}`
 
-  // Create a response
+  // Create a response via the active auth provider's session enforcement
+  // (supabase refreshes/validates the session, none passes through)
   let response: NextResponse
 
-  if (hasSupabasePublicConfig()) {
-    response = await updateSession(request)
-  } else {
-    // If Supabase is not configured, just pass the request through
-    response = NextResponse.next({
-      request
-    })
-  }
+  response = await getAuthProvider().handleSession(request)
 
   // Add request information to response headers
   response.headers.set('x-url', request.url)

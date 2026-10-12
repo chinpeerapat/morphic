@@ -29,7 +29,7 @@ An AI-powered search engine with a generative UI.
 - Chat history stored in PostgreSQL
 - Share search results with unique URLs
 - File upload support
-- User authentication with Supabase Auth
+- User authentication with built-in accounts (Better Auth) or Supabase Auth
 - Guest mode for anonymous usage
 - Docker deployment ready
 
