@@ -1,7 +1,7 @@
 import { tool, UIToolInvocation } from 'ai'
 
 import { INVALID_URL_SENTINEL, ToolFailureError } from '@/lib/errors/tool-error'
-import { fetchSchema } from '@/lib/schema/fetch'
+import { crawl4aiFetchSchema, fetchSchema } from '@/lib/schema/fetch'
 import { SearchResults as SearchResultsType } from '@/lib/types'
 import {
   assignCitationLabels,
@@ -187,16 +187,172 @@ async function fetchTavilyExtractData(url: string): Promise<SearchResultsType> {
   }
 }
 
+// crawl4ai's /crawl is called in two passes: a browser render first, then the
+// PDF scraping strategy for anything the render could not extract, since
+// Chromium cannot render PDFs. Morphic itself never requests the origin.
+interface Crawl4aiCrawlResult {
+  url?: string
+  redirected_url?: string | null
+  success?: boolean
+  error_message?: string | null
+  metadata?: { title?: string | null } | null
+  markdown?: {
+    raw_markdown?: string | null
+    fit_markdown?: string | null
+  } | null
+}
+
+const CRAWL4AI_PAGE_TIMEOUT_MS = 30000
+const CRAWL4AI_PDF_TIMEOUT_MS = 60000
+
+async function postCrawl4ai(
+  baseUrl: string,
+  url: string,
+  crawlerConfig: Record<string, unknown>,
+  timeoutMs: number
+): Promise<{
+  success?: boolean
+  results?: Crawl4aiCrawlResult[]
+}> {
+  const apiKey = process.env.CRAWL4AI_API_KEY
+
+  try {
+    const response = await fetch(`${baseUrl}/crawl`, {
+      method: 'POST',
+      headers: {
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ urls: [url], crawler_config: crawlerConfig }),
+      // Unlike a cleared timer, this still fires while the body is being read.
+      signal: AbortSignal.timeout(timeoutMs)
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `crawl4ai request failed: HTTP ${response.status} ${response.statusText}`
+      )
+    }
+
+    return await response.json()
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.name === 'AbortError' || error.name === 'TimeoutError')
+    ) {
+      throw new Error(
+        `crawl4ai request timed out after ${timeoutMs / 1000} seconds`
+      )
+    }
+    throw error
+  }
+}
+
+function crawl4aiMarkdown(result: Crawl4aiCrawlResult): string {
+  // fit_markdown is empty for PDFs and for sparse pages the pruner rejects.
+  return result.markdown?.fit_markdown || result.markdown?.raw_markdown || ''
+}
+
+function crawl4aiSearchResults(
+  url: string,
+  result: Crawl4aiCrawlResult,
+  markdown: string
+): SearchResultsType {
+  const content = markdown.slice(0, CONTENT_CHARACTER_LIMIT)
+  const resultUrl = result.redirected_url || result.url || url
+  // The crawler reports this URL, so it passes the same gate as any result.
+  assertPublicUrl(resultUrl)
+  const rawTitle = result.metadata?.title?.trim() || new URL(resultUrl).hostname
+  const title =
+    rawTitle.length > TITLE_CHARACTER_LIMIT
+      ? rawTitle.substring(0, TITLE_CHARACTER_LIMIT) + '...'
+      : rawTitle
+
+  return {
+    results: [
+      {
+        title,
+        content,
+        url: resultUrl
+      }
+    ],
+    query: '',
+    images: []
+  }
+}
+
+function crawl4aiPayload(json: {
+  success?: boolean
+  results?: Crawl4aiCrawlResult[]
+}): { success: boolean; result: Crawl4aiCrawlResult; markdown: string } {
+  const result = json.results?.[0] ?? {}
+  return {
+    success: Boolean(json.success && result.success),
+    result,
+    markdown: crawl4aiMarkdown(result)
+  }
+}
+
+async function fetchCrawl4aiData(url: string): Promise<SearchResultsType> {
+  const baseUrl = process.env.CRAWL4AI_BASE_URL?.replace(/\/+$/, '')
+  if (!baseUrl) {
+    throw new Error('CRAWL4AI_BASE_URL is not configured')
+  }
+
+  const first = crawl4aiPayload(
+    await postCrawl4ai(
+      baseUrl,
+      url,
+      {
+        markdown_generator: {
+          type: 'DefaultMarkdownGenerator',
+          params: {
+            content_filter: { type: 'PruningContentFilterLXML', params: {} }
+          }
+        }
+      },
+      CRAWL4AI_PAGE_TIMEOUT_MS
+    )
+  )
+  if (first.success && first.markdown) {
+    return crawl4aiSearchResults(url, first.result, first.markdown)
+  }
+
+  const second = crawl4aiPayload(
+    await postCrawl4ai(
+      baseUrl,
+      url,
+      { scraping_strategy: { type: 'PDFContentScrapingStrategy', params: {} } },
+      CRAWL4AI_PDF_TIMEOUT_MS
+    )
+  )
+  if (second.success && second.markdown) {
+    return crawl4aiSearchResults(url, second.result, second.markdown)
+  }
+
+  throw new Error(
+    second.result.error_message ||
+      first.result.error_message ||
+      'No data returned from crawl4ai'
+  )
+}
+
 export function createFetchTool(options?: {
   labelAllocator?: CitationLabelAllocator
 }) {
   const labelAllocator =
     options?.labelAllocator ?? createCitationLabelAllocator()
 
+  // crawl4ai serves both types, so its wording differs. The default wording
+  // is what every other deployment's prompt carries and must not change here.
+  const usesCrawl4ai = !!process.env.CRAWL4AI_BASE_URL
+  const description = usesCrawl4ai
+    ? 'Fetch content from any URL as clean markdown through a self-hosted crawl4ai instance. Web pages, JavaScript-rendered pages and PDFs are all supported, and the "regular" and "api" types behave the same.'
+    : 'Fetch content from any URL. By default uses "regular" type which performs fast, direct HTML fetching without external APIs - ideal for most websites. IMPORTANT: "regular" type does NOT support PDFs and will fail on PDF URLs. Use "api" type when you need: 1) PDF content extraction (required for .pdf URLs), 2) Complex JavaScript-rendered pages, 3) Better markdown formatting, 4) Table extraction. The "api" type requires Jina or Tavily API keys and uses Jina Reader if available, otherwise falls back to Tavily Extract.'
+
   return tool({
-    description:
-      'Fetch content from any URL. By default uses "regular" type which performs fast, direct HTML fetching without external APIs - ideal for most websites. IMPORTANT: "regular" type does NOT support PDFs and will fail on PDF URLs. Use "api" type when you need: 1) PDF content extraction (required for .pdf URLs), 2) Complex JavaScript-rendered pages, 3) Better markdown formatting, 4) Table extraction. The "api" type requires Jina or Tavily API keys and uses Jina Reader if available, otherwise falls back to Tavily Extract.',
-    inputSchema: fetchSchema,
+    description,
+    inputSchema: usesCrawl4ai ? crawl4aiFetchSchema : fetchSchema,
     async *execute({ url, type = 'regular' }) {
       assertFetchableUrl(url)
       // Ahead of the branch below, so an address the server must not reach is
@@ -218,7 +374,12 @@ export function createFetchTool(options?: {
       // Only the retrieval is wrapped: a yield rejects when the consumer stops
       // reading, and an aborted stream is not a failure of the page.
       try {
-        if (type === 'regular') {
+        if (process.env.CRAWL4AI_BASE_URL) {
+          // The name is settled before the handoff; redirect hops are the
+          // crawler's to guard.
+          await assertResolvedPublicUrl(url)
+          results = await fetchCrawl4aiData(url)
+        } else if (type === 'regular') {
           // Use regular fetch for direct HTML retrieval
           results = await fetchRegularData(url)
         } else {

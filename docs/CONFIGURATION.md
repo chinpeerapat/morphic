@@ -336,6 +336,16 @@ SUPABASE_SECRET_KEY=[YOUR_SUPABASE_SECRET_KEY]
    not allowlisted, Supabase silently falls back to the project Site URL and
    the recovery code can never be exchanged for a session.
 
+5. Optional: keep Supabase's per-IP rate limits per visitor. Sign-up,
+   password sign-in, and password reset run as server actions, so Supabase
+   sees the server's address unless Morphic forwards the visitor's. To
+   forward it, use an `sb_secret_...` key for `SUPABASE_SECRET_KEY` and turn
+   on **Authentication → Rate Limits → IP Address Forwarding**. On Vercel
+   production and preview deployments this is automatic. Elsewhere,
+   including `vercel dev`, set `SUPABASE_FORWARD_CLIENT_IP=true` only when a
+   reverse proxy in front of Morphic overwrites `X-Forwarded-For`; otherwise
+   visitors can spoof it to dodge the limits.
+
 ## Guest Mode
 
 Guest mode allows users to try Morphic without creating an account. Guest sessions are ephemeral — no chat history is stored.
@@ -482,4 +492,12 @@ Use Jina for enhanced content extraction:
 
 ```bash
 JINA_API_KEY=[YOUR_API_KEY]
+```
+
+Alternatively, a self-hosted [crawl4ai](https://github.com/unclecode/crawl4ai) instance can serve as the fetch backend. When `CRAWL4AI_BASE_URL` is set it handles every fetch the tool performs — both regular and API extraction, PDFs included — and takes precedence over Jina and Tavily. The URL is sent to the crawler's `/crawl` pipeline in two passes: first as a page with the same fit filter the server's `/md` endpoint applies, then, if that yields nothing (Chromium cannot render PDFs), with the server's dedicated PDF scraping strategy. No request to the target is made from the Morphic server itself; detection runs through the crawler:
+
+```bash
+CRAWL4AI_BASE_URL=http://localhost:11235
+# Optional: only needed when the instance requires an API key
+# CRAWL4AI_API_KEY=[YOUR_CRAWL4AI_API_KEY]
 ```
