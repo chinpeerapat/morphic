@@ -13,6 +13,14 @@ import type {
   ToolState
 } from '@/lib/types/message-persistence'
 
+// The tsvector search columns are projected out of normal chat loads
+// (loadChat / loadChatWithMessages) so stored vectors are not transported on
+// every chat open. Mapping only needs the remaining columns.
+export type DBMessagePartWithoutVectors = Omit<
+  DBMessagePartSelect,
+  'search' | 'searchReasoning'
+>
+
 // Define local types for message parts that are compatible with the AI SDK
 type TextUIPart = { type: 'text'; text: string; providerMetadata?: any }
 type ReasoningUIPart = {
@@ -314,6 +322,25 @@ export function mapUIMessagePartsToDBParts(
         }
         return createToolPartMapping(basePart, part, 'todoRead')
 
+      // Stored in the dynamic tool columns, so drafts need no schema change.
+      // Read back as tool-editDraft by the 'draft' dynamic type.
+      case 'tool-editDraft':
+        if (!isExtendedToolPart(part)) {
+          console.error('Invalid extended tool part:', part)
+          return null
+        }
+        return {
+          ...basePart,
+          type: 'tool-dynamic',
+          tool_toolCallId: part.toolCallId || generateId(),
+          tool_state: part.state || ('input-available' as ToolState),
+          tool_dynamic_name: 'editDraft',
+          tool_dynamic_type: 'draft',
+          tool_dynamic_input: part.input,
+          tool_dynamic_output: part.output,
+          tool_errorText: part.errorText
+        }
+
       // Data parts
       default:
         if (part.type.startsWith('data-')) {
@@ -345,7 +372,7 @@ export function mapUIMessagePartsToDBParts(
  * Convert DB message parts to UI format
  */
 export function mapDBPartToUIMessagePart(
-  part: DBMessagePartSelect
+  part: DBMessagePartWithoutVectors
 ): UIMessagePart {
   switch (part.type) {
     case 'text':
@@ -394,11 +421,21 @@ export function mapDBPartToUIMessagePart(
       if (part.type.startsWith('tool-')) {
         const toolName = part.type.substring(5) // Remove 'tool-' prefix
         const inputColumn =
-          `tool_${toolName}_input` as keyof DBMessagePartSelect
+          `tool_${toolName}_input` as keyof DBMessagePartWithoutVectors
         const outputColumn =
-          `tool_${toolName}_output` as keyof DBMessagePartSelect
+          `tool_${toolName}_output` as keyof DBMessagePartWithoutVectors
 
         // Special handling for dynamic tools
+        if (toolName === 'dynamic' && part.tool_dynamic_type === 'draft') {
+          return {
+            type: `tool-${part.tool_dynamic_name}`,
+            toolCallId: part.tool_toolCallId || '',
+            state: part.tool_state as any,
+            input: part.tool_dynamic_input,
+            output: part.tool_dynamic_output,
+            errorText: part.tool_errorText
+          } as any
+        }
         if (toolName === 'dynamic') {
           return {
             type: 'dynamic-tool',
@@ -776,7 +813,7 @@ export function buildUIMessageFromDB(
     metadata?: UIMessageMetadata | null
     createdAt?: Date | string
   },
-  dbParts: DBMessagePartSelect[]
+  dbParts: DBMessagePartWithoutVectors[]
 ): UIMessage {
   // Merge metadata from DB with createdAt
   const metadata: UIMessageMetadata = {
